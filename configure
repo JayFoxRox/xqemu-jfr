@@ -2569,33 +2569,30 @@ libs_softmmu="$libs_softmmu $fdt_libs"
 # opengl probe, used by milkymist-tmu2
 if test "$opengl" != "no" ; then
   if test "$darwin" = "yes" ; then
-    opengl_libs="-framework OpenGL -framework GLUT"
+    opengl_libs="-framework OpenGL"
     cat > $TMPC << EOF
 #include <OpenGL/gl.h>
 #include <OpenGL/CGLTypes.h>
 #include <OpenGL/CGLCurrent.h>
-#include <GLUT/glut.h>
 int main(void) { return GL_VERSION != 0; }
 EOF
   elif test "$mingw32" = "yes" ; then
-	opengl_libs="-lglut32win -lOpenGL32 -lglu32 -lglew32 -lgdi32"
+	opengl_libs="-lOpenGL32 -lglu32 -lglew32 -lgdi32"
 	cat > $TMPC << EOF
 #include <windows.h>
 #include <GL/glew.h>
 #include <GL/gl.h>
 #include <GL/glext.h>
 #include <GL/wglext.h>
-#include <GL/glut.h>
 int main(void) { return GL_VERSION != 0; }
 EOF
   else
-    # change this to "if 0; then" you want EGL instead of GLX
+    # change this to "if false; then" you want EGL instead of GLX
     # also requires a change in Makefile.target, look for "obj-gl"
-    if 1; then
+    if true; then
       opengl_libs="-lGLEW -lGLU -lGL -lGLX -lX11"
       cat > $TMPC << EOF
 #include <GL/glew.h>
-#include <GL/glut.h>
 #include <GL/glu.h>
 #include <GL/glx.h>
 #include <X11/Xlib.h>
@@ -2605,7 +2602,6 @@ EOF
       opengl_libs="-lGLEW -lGLU -lGL -lEGL"
       cat > $TMPC << EOF
 #include <GL/glew.h>
-#include <GL/glut.h>
 #include <GL/glu.h>
 #include <EGL/egl.h>
 int main(void) { return GL_VERSION != 0; }
