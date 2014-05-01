@@ -42,28 +42,6 @@ struct _GloContext {
 
 static Display* x_display;
 
-/*
-static const char* eglGetErrorString(void)
-{
-    EGLint err = eglGetError();
-    if (err == EGL_SUCCESS            ) { return "";                        }
-    if (err == EGL_NOT_INITIALIZED    ) { return "EGL_NOT_INITIALIZED";     }
-    if (err == EGL_BAD_ACCESS         ) { return "EGL_BAD_ACCESS";          }
-    if (err == EGL_BAD_ALLOC          ) { return "EGL_BAD_ALLOC";           }
-    if (err == EGL_BAD_ATTRIBUTE      ) { return "EGL_BAD_ATTRIBUTE";       }
-    if (err == EGL_BAD_CONTEXT        ) { return "EGL_BAD_CONTEXT";         }
-    if (err == EGL_BAD_CONFIG         ) { return "EGL_BAD_CONFIG";          }
-    if (err == EGL_BAD_CURRENT_SURFACE) { return "EGL_BAD_CURRENT_SURFACE"; }
-    if (err == EGL_BAD_DISPLAY        ) { return "EGL_BAD_DISPLAY";         }
-    if (err == EGL_BAD_SURFACE        ) { return "EGL_BAD_SURFACE";         }
-    if (err == EGL_BAD_MATCH          ) { return "EGL_BAD_MATCH";           }
-    if (err == EGL_BAD_PARAMETER      ) { return "EGL_BAD_PARAMETER";       }
-    if (err == EGL_BAD_NATIVE_PIXMAP  ) { return "EGL_BAD_NATIVE_PIXMAP";   }
-    if (err == EGL_BAD_NATIVE_WINDOW  ) { return "EGL_BAD_NATIVE_WINDOW";   }
-    if (err == EGL_CONTEXT_LOST       ) { return "EGL_CONTEXT_LOST";        }
-    return "<Unknown EGL Error>";
-}
-*/
 
 /* Create an OpenGL context for a certain pixel format. formatflags are from 
  * the GLO_ constants */
@@ -102,7 +80,7 @@ GloContext *glo_context_create(int formatFlags)
     if (configs == NULL) { return NULL; }
     if (nelements == 0) { return NULL; }
 
-#if 0
+#if 1
     /* Tiny surface because apitrace doesn't handle no surface yet */
     int surface_attribute_list[] = {
         GLX_PBUFFER_WIDTH,16,
