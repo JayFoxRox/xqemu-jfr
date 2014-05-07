@@ -30,6 +30,7 @@
 #include "hw/xbox/amd_smbus.h"
 #include "hw/acpi/acpi.h"
 #include "hw/xbox/acpi_xbox.h"
+#include "hw/xbox/mcpx_rom.h"
 
 
 typedef struct XBOX_PCIState {
@@ -54,9 +55,7 @@ typedef struct XBOX_LPCState {
     ISABus *isa_bus;
     XBOX_PMRegs pm;
     qemu_irq *pic;
-
-    int bootrom_size;
-    uint8_t bootrom_data[512];
+    XBOX_MCPXState mcpx_state;
 } XBOX_LPCState;
 
 #define XBOX_PCI_DEVICE(obj) \

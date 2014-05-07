@@ -290,38 +290,12 @@ static int xbox_lpc_initfn(PCIDevice *d)
     isa_bus = isa_bus_new(&d->qdev, get_system_io());
     s->isa_bus = isa_bus;
 
-
     /* southbridge chip contains and controls bootrom image.
      * can't load it through loader.c because it overlaps with the bios...
      * We really should just commandeer the entire top 16Mb.
      */
-    QemuOpts *machine_opts = qemu_opts_find(qemu_find_opts("machine"), 0);
-    if (machine_opts) {
-        const char *bootrom_file = qemu_opt_get(machine_opts, "bootrom");
-        if (!bootrom_file) bootrom_file = "mcpx.bin";
-
-        char *filename;
-        int rc, fd = -1;
-        if (bootrom_file
-              && (filename = qemu_find_file(QEMU_FILE_TYPE_BIOS, bootrom_file))) {
-            s->bootrom_size = get_image_size(filename);
-
-            if (s->bootrom_size != 512) {
-                fprintf(stderr, "MCPX bootrom should be 512 bytes, got %d\n",
-                        s->bootrom_size);
-                return -1;
-            }
-
-            fd = open(filename, O_RDONLY | O_BINARY);
-            assert(fd != -1);
-            rc = read(fd, s->bootrom_data, s->bootrom_size);
-            assert(rc == s->bootrom_size);
-
-            close(fd);
-        }
-    }
-
-
+    mcpx_rom_init(&s->mcpx_state);
+    
     return 0;
 }
 
@@ -332,28 +306,8 @@ static void xbox_lpc_reset(DeviceState *dev)
     PCIDevice *d = PCI_DEVICE(dev);
     XBOX_LPCState *s = XBOX_LPC_DEVICE(d);
 
-
-    if (s->bootrom_size) {
-        /* qemu's memory region shit is actually kinda broken -
-         * Trying to execute off a non-page-aligned memory region
-         * is fucked, so we can't just map in the bootrom.
-         *
-         * We need to be able to disable it at runtime, and
-         * it shouldn't be visible ontop of the bios mirrors. It'll have to
-         * be a retarded hack.
-         *
-         * Be lazy for now and just write it ontop of the bios.
-         *
-         * (We do this here since loader.c loads roms into memory in a reset
-         * handler, and here we /should/ be handled after it.)
-         */
-
-        hwaddr bootrom_addr = (uint32_t)(-s->bootrom_size);
-        cpu_physical_memory_write_rom(bootrom_addr,
-                                      s->bootrom_data,
-                                      s->bootrom_size);
-     }
-
+    mcpx_rom_reset(&s->mcpx_state);
+    
 }
 
 
