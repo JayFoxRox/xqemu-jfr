@@ -1,5 +1,5 @@
 /*
- * QEMU Geforce NV2A vertex shader translation
+ * QEMU Geforce NV2A GPU vertex shader translation
  *
  * Copyright (c) 2012 espes
  *
@@ -29,7 +29,7 @@
 #include <stdbool.h>
 #include <assert.h>
 
-#include "hw/xbox/nv2a_vsh.h"
+#include "hw/xbox/nv2a_gpu_vsh.h"
 
 #define VSH_D3DSCM_CORRECTION 96
 

@@ -61,12 +61,13 @@
 static const char* smc_version_string = "P01";
 
 
-//#define DEBUG
+#define DEBUG
 
 typedef struct SMBusSMCDevice {
     SMBusDevice smbusdev;
     int versionStringIndex;
 } SMBusSMCDevice;
+
 
 static void smc_quick_cmd(SMBusDevice *dev, uint8_t read)
 {
@@ -105,7 +106,18 @@ static void smc_write_data(SMBusDevice *dev, uint8_t cmd, uint8_t *buf, int len)
             /* version string reset */
             smc->versionStringIndex = buf[0];
             break;
-
+        case SMC_REG_POWER:
+            if (buf[0] == SMC_REG_POWER_RESET) {
+              qemu_system_reset_request(); //FIXME: This should not clear 
+            } else if (buf[0] == SMC_REG_POWER_CYCLE) {
+              qemu_system_reset_request(); //FIXME: This should clear RAM
+            } else if (buf[0] == SMC_REG_POWER_SHUTDOWN) {
+              qemu_system_shutdown_request();
+            } else {
+              // Xbox crashes/hangs normally!
+              // Not sure if SMC still works, but I believe it does
+              assert(0);
+            }
         /* challenge response
          * (http://www.xbox-linux.org/wiki/PIC_Challenge_Handshake_Sequence) */
         case 0x20:

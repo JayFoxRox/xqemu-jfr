@@ -428,13 +428,21 @@ static QemuOptsList qemu_machine_opts = {
             .type = QEMU_OPT_BOOL,
             .help = "Set on/off to enable/disable usb",
         },{
-            .name = "bootrom",
+            .name = "mcpx_rom",
             .type = QEMU_OPT_STRING,
-            .help = "Xbox bootrom file",
+            .help = "Xbox MCPX ROM file",
+        },{
+            .name = "mcpx_revision",
+            .type = QEMU_OPT_NUMBER,
+            .help = "Xbox MCPX revision",
+        },{
+            .name = "mcpx_xmode",
+            .type = QEMU_OPT_NUMBER,
+            .help = "Xbox MCPX XMode (2 or 3)",
         },{
             .name = "eeprom",
             .type = QEMU_OPT_STRING,
-            .help = "Xbox eeprom file",
+            .help = "Xbox EEPROM file",
         },{
             .name = "mediaboard_rom",
             .type = QEMU_OPT_STRING,

@@ -33,7 +33,7 @@
 #include "hw/xbox/xbox.h"
 #include "exec/cpu-all.h"
 
-#include "hw/xbox/mcpx_rom.h"
+#include "hw/xbox/mcpx.h"
 
 #include "hw/xbox/rc4.h" // UGLY.. do this differently?
 
@@ -118,10 +118,10 @@ FIXME!
     prepare_kernel_registers(s);
 }
 #else
-static void emulate_2bl(XBOX_MCPXState* s) { warningPrintf("2BL emulation not supported but used\n"); }
+static void emulate_2bl(struct XBOX_MCPXState* s) { warningPrintf("2BL emulation not supported but used\n"); }
 #endif
 
-static void mcpx_rom_switch_to_protected_mode(XBOX_MCPXState* s)
+static void mcpx_rom_switch_to_protected_mode(struct XBOX_MCPXState* s)
 {
 
   X86CPU *cpu = X86_CPU(first_cpu);
@@ -150,7 +150,7 @@ static void mcpx_rom_switch_to_protected_mode(XBOX_MCPXState* s)
 
 }
 
-static void mcpx_rom_run_xcode(XBOX_MCPXState* s)
+static void mcpx_rom_run_xcode(struct XBOX_MCPXState* s)
 {
   
   X86CPU *cpu = X86_CPU(first_cpu);
@@ -277,7 +277,7 @@ static void mcpx_rom_run_xcode(XBOX_MCPXState* s)
 }
 
 // FIXME: Verify against actual bootrom
-static void mcpx_rom_setup_mtrr(XBOX_MCPXState* s)
+static void mcpx_rom_setup_mtrr(struct XBOX_MCPXState* s)
 {
 
   X86CPU *cpu = X86_CPU(first_cpu);
@@ -306,6 +306,8 @@ static void mcpx_rom_setup_mtrr(XBOX_MCPXState* s)
 
 static void emulate_mcpx_rom(XBOX_MCPXState* s)
 {
+
+  printf("MCPX HLE!\n");
 
   X86CPU *cpu = X86_CPU(first_cpu);
   CPUX86State *env = &cpu->env;
@@ -346,14 +348,17 @@ static void emulate_mcpx_rom(XBOX_MCPXState* s)
       // 32 bit check          
       uint32_t magic;
       cpu_physical_memory_read(0x00095fe4, &magic, 4);
-      assert(magic == jayfoxrox_2bl_hash); //FIXME: Is sharing this hash legal?
+      assert(magic == jayfoxrox_2bl_hash); //FIXME: Is sharing this value legal?
       debugPrintf("Check passed. Magic: 0x%08X?!\n",magic);
     }      
+
     // Now jump to 2bl
     uint32_t entryPoint; // FIXME: Better type?
     cpu_physical_memory_read(0x00090000, &entryPoint, 4);
     debugPrintf("Booting 2bl from 0x%08X\n",entryPoint);
-    env->eip = entryPoint;
+    env->regs[R_ESI] = 0x8f000; // S-Box location - is this necessary?!
+    env->regs[R_EDI] = length; // 2bl size
+    env->eip = env->regs[R_EAX] = entryPoint;
   } else {
     // Go to 2bl HLE
     s->rom.hle_2bl_code = true;
@@ -388,7 +393,7 @@ static int load_mcpx_rom(XBOX_MCPXState* s, const char* bootrom_file) {
 }
 
 
-void mcpx_rom_hide(XBOX_MCPXState* s)
+void mcpx_rom_hide(struct XBOX_MCPXState* s)
 {
   debugPrintf("MCPX is hidden now\n");
 
@@ -401,7 +406,7 @@ void mcpx_rom_hide(XBOX_MCPXState* s)
   s->rom.enabled = false;
 }
 
-void mcpx_rom_show(XBOX_MCPXState* s) {
+void mcpx_rom_show(struct XBOX_MCPXState* s) {
   debugPrintf("MCPX is shown now\n");
 
   if (!s->rom.enabled) {
@@ -457,12 +462,24 @@ void mcpx_rom_show(XBOX_MCPXState* s) {
 
 }
 
-void mcpx_rom_init(XBOX_MCPXState* s)
+static void mcpx_rom_reset_late(struct XBOX_MCPXState* s)
 {
 
-  // FIXME: These 2 should be in xbox.c or in a new file called mcpx.c
-  s->xmode = 0x3; // FIXME: option mcpx_xmode [can be 0x2 or 0x3, later maybe 0x0 or 0x1 too]
-  s->revision = 0xB2; //FIXME: option mcpx_revision
+  printf("Late reset! 0x%X\n",s);
+
+  if (s->rom.hle_mcpx_rom_code) {
+    // Emulate the MCPX startup
+    emulate_mcpx_rom(s);
+  }
+
+  qemu_unregister_reset(mcpx_rom_reset_late, s);
+ 
+}
+
+void mcpx_rom_init(struct XBOX_MCPXState* s)
+{
+
+
 
   // Make sure we keep track wether the MCPX is enabled or not
   s->rom.enabled = false;
@@ -473,6 +490,11 @@ debugPrintf("in rom init, booting X%X, revision 0x%02X\n",s->xmode,s->revision);
   QemuOpts *machine_opts = qemu_opts_find(qemu_find_opts("machine"), 0);
   if (machine_opts) {
     mcpx_rom = qemu_opt_get(machine_opts, "mcpx_rom");
+/*
+FIXME: Would this work?
+    s->revision = qemu_opt_get(machine_opts, "mcpx_revision");
+    s->xmode = qemu_opt_get(machine_opts, "mcpx_xmode");
+*/
   }
 
   // Only the XMode 3 has an internal ROM
@@ -490,30 +512,35 @@ debugPrintf("in rom init, booting X%X, revision 0x%02X\n",s->xmode,s->revision);
     // Load the MCPX ROM from file  
     load_mcpx_rom(s,mcpx_rom);
   } else {
+    // Inject a breakpoint so we are notified of the CPU reseting
+/*
+FIXME!
+    if (kvm_enabled()) {
+        return kvm_insert_breakpoint(gdbserver_state->c_cpu, addr, len, type);
+    }
+*/
     s->rom.hle_mcpx_rom_code = true;
   }
 
   return;  
 }
 
-void mcpx_rom_reset(XBOX_MCPXState* s)
+
+void mcpx_rom_reset(struct XBOX_MCPXState* s)
 {
+  printf("Added late reset for MCPX HLE\n");
+  qemu_register_reset(mcpx_rom_reset_late, s);
 
   debugPrintf("Resetting the MCPX ROM\n");
 
   bool has_internal_rom = (s->xmode == 0x3);
   if (!has_internal_rom) {
+    debugPrintf("Reset complete, no internal MCPX ROM\n");
     return;
   }
 
   // Make the MCPX image visible
   mcpx_rom_show(s);
-
-  // FIXME: This should actually only happen on a CPU Reset.. not the southbridge reset!
-  if (s->rom.hle_mcpx_rom_code) {
-    // Emulate the MCPX startup
-    emulate_mcpx_rom(s);
-  }
 
   debugPrintf("Reset complete\n");
 

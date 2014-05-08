@@ -21,12 +21,26 @@
 #ifndef MCPX_H
 #define MCPX_H
 
-#include "hw/xbox/mcpx_rom.h"
+#include "hw/hw.h"
+
+typedef struct XBOX_MCPX_ROMState {
+  bool hle_mcpx_rom_code;
+  bool hle_2bl_code;
+  bool load_kernel;
+  bool enabled;
+  uint8_t bootrom_data[512];
+  uint8_t flash_data[512];
+} XBOX_MCPX_ROMState;
 
 typedef struct XBOX_MCPXState {
   uint8_t xmode;
   uint8_t revision;
   XBOX_MCPX_ROMState rom;
 } XBOX_MCPXState;
+
+void mcpx_init(XBOX_MCPXState* s);
+void mcpx_reset(XBOX_MCPXState* s);
+
+#include "hw/xbox/mcpx_rom.h"
 
 #endif

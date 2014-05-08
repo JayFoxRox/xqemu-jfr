@@ -1,8 +1,8 @@
 /*
- * QEMU MCPX internal ROM implementation
+ * QEMU Xbox System Management Controller
  *
- * Copyright (c) 2014 espes
  * Copyright (c) 2014 Jannik Vogel
+ * Copyright (c) 2011 espes
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -18,12 +18,11 @@
  * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef MCPX_ROM_H
-#define MCPX_ROM_H
+#include "hw/xbox/mcpx.h"
 
-void mcpx_rom_hide(XBOX_MCPXState* s);
-void mcpx_rom_show(XBOX_MCPXState* s);
-void mcpx_rom_init(XBOX_MCPXState* s);
-void mcpx_rom_reset(XBOX_MCPXState* s);
+#include "hw/xbox/smc.h"
 
-#endif
+void smc_force_reset(void) {
+  // Force the MCPX to reset
+  mcpx_reset(NULL); //FIXME: Dirty hack
+}

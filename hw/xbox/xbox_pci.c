@@ -289,12 +289,6 @@ static int xbox_lpc_initfn(PCIDevice *d)
 
     isa_bus = isa_bus_new(&d->qdev, get_system_io());
     s->isa_bus = isa_bus;
-
-    /* southbridge chip contains and controls bootrom image.
-     * can't load it through loader.c because it overlaps with the bios...
-     * We really should just commandeer the entire top 16Mb.
-     */
-    mcpx_rom_init(&s->mcpx_state);
     
     return 0;
 }
@@ -305,8 +299,6 @@ static void xbox_lpc_reset(DeviceState *dev)
 {
     PCIDevice *d = PCI_DEVICE(dev);
     XBOX_LPCState *s = XBOX_LPC_DEVICE(d);
-
-    mcpx_rom_reset(&s->mcpx_state);
     
 }
 

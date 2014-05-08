@@ -1,7 +1,8 @@
 /*
- * QEMU Geforce NV2A implementation
+ * QEMU NV2A (Northbridge) implementation
  *
- * Copyright (c) 2012 espes
+ * Copyright (c) 2014 espes
+ * Copyright (c) 2014 Jannik Vogel
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -17,9 +18,9 @@
  * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef HW_NV2A_H
-#define HW_NV2A_H
+#ifndef NV2A_H
+#define NV2A_H
 
-void nv2a_init(PCIBus *bus, int devfn, MemoryRegion *ram);
+void nv2a_reset(void);
 
 #endif

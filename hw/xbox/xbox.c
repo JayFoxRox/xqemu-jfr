@@ -38,8 +38,9 @@
 #include "exec/address-spaces.h"
 #include "qemu/config-file.h"
 
+#include "hw/xbox/smc.h"
 #include "hw/xbox/xbox_pci.h"
-#include "hw/xbox/nv2a.h"
+#include "hw/xbox/nv2a_gpu.h"
 
 #include "hw/xbox/xbox.h"
 
@@ -117,6 +118,8 @@ bios_error:
     */
 
 }
+
+//FIXME: Move most of this to mcpx.c and nv2a.c so we can cleanly handle resets
 
 /* mostly from pc_init1 */
 void xbox_init_common(QEMUMachineInitArgs *args,
@@ -271,10 +274,15 @@ void xbox_init_common(QEMUMachineInitArgs *args,
     /* ACI! */
     PCIDevice *aci = pci_create_simple(host_bus, PCI_DEVFN(6, 0), "mcpx-aci");
 
+    /* MCPX! */
+    XBOX_MCPXState* mcpx = g_malloc(sizeof(XBOX_MCPXState));
+    mcpx_init(mcpx);
+
     /* GPU! */
-    nv2a_init(agp_bus, PCI_DEVFN(0, 0), ram_memory);
+    nv2a_gpu_init(agp_bus, PCI_DEVFN(0, 0), ram_memory);
 
     *out_isa_bus = isa_bus;
+
 }
 
 static void xbox_init(QEMUMachineInitArgs *args)
@@ -360,10 +368,19 @@ static void xbox_init(QEMUMachineInitArgs *args)
     xbox_init_common(args, (uint8_t*)eeprom, &isa_bus);
 }
 
+// Resetting the Xbox is usually done by asking the SMC to reset
+static void xbox_reset(void) {
+  printf("Resetting xbox\n");
+  smc_force_reset();
+  printf("Xbox reset\n");
+  //FIXME: Handle default resets?
+}
+
 static QEMUMachine xbox_machine = {
     .name = "xbox",
     .desc = "Microsoft Xbox",
     .init = xbox_init,
+    //.reset = xbox_reset,
     .max_cpus = 1,
     .no_floppy = 1,
     .no_cdrom = 1,

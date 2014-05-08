@@ -1,7 +1,7 @@
 /*
- * QEMU Geforce NV2A vertex shader translation
+ * QEMU Geforce NV2A GPU pixel shader translation
  *
- * Copyright (c) 2012 espes
+ * Copyright (c) 2013 espes
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -19,25 +19,18 @@
  * GNU GPL, version 2 or (at your option) any later version.
  */
 
-#ifndef HW_NV2A_VSH_H
-#define HW_NV2A_VSH_H
+#ifndef HW_NV2A_GPU_PSH_H
+#define HW_NV2A_GPU_PSH_H
 
 #include "qapi/qmp/qstring.h"
 
-// vs.1.1, not an official value
-#define VSH_VERSION_VS                     0xF078
-
-// Xbox vertex shader
-#define VSH_VERSION_XVS                    0x2078
-
-// Xbox vertex state shader
-#define VSH_VERSION_XVSS                   0x7378
-
-// Xbox vertex read/write shader
-#define VSH_VERSION_XVSW                   0x7778
-
-QString* vsh_translate(uint16_t version,
-                       uint32_t *tokens, unsigned int tokens_length);
-
+QString *psh_translate(uint32_t combiner_control, uint32_t shader_stage_program,
+                       uint32_t other_stage_input,
+                       uint32_t rgb_inputs[8], uint32_t rgb_outputs[8],
+                       uint32_t alpha_inputs[8], uint32_t alpha_outputs[8],
+                       /*uint32_t constant_0[8], uint32_t constant_1[8],*/
+                       uint32_t final_inputs_0, uint32_t final_inputs_1,
+                       /*uint32_t final_constant_0, uint32_t final_constant_1,*/
+                       bool rect_tex[4]);
 
 #endif

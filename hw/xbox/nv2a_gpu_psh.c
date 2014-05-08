@@ -1,5 +1,5 @@
 /*
- * QEMU Geforce NV2A pixel shader translation
+ * QEMU Geforce NV2A GPU pixel shader translation
  *
  * Copyright (c) 2013 espes
  *
@@ -32,7 +32,7 @@
 
 #include "qapi/qmp/qstring.h"
 
-#include "hw/xbox/nv2a_psh.h"
+#include "hw/xbox/nv2a_gpu_psh.h"
 
 /*
  * This implements translation of register combiners into glsl
