@@ -1581,6 +1581,34 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
                 height = 1 << texture->log_height;
             }
 
+            /* Label the object so we can find it later in the debugger */
+            if (1) {
+                static bool initialized = false;
+                static void(*imported_glObjectLabelKHR)(GLenum identifier, GLuint name, GLsizei length, const char *label) = NULL;
+                if (!initialized) {
+                    const GLubyte *extensions = glGetString(GL_EXTENSIONS);
+                    if (glo_check_extension((const GLubyte *)"GL_KHR_debug",extensions)) {
+                        imported_glObjectLabelKHR = glo_get_extension_proc((const GLubyte *)"glObjectLabel");
+                    }
+                    initialized = true;
+                }
+                if (imported_glObjectLabelKHR) {
+                    char buffer[256];
+                    sprintf(buffer,"%s.0x%08X+0x%X: { dirty: %i;"
+                                   "color_format: %i;"
+                                   "pitch: %i }",
+                                   texture->dma_select?"A":"B",
+                                   texture->dma_select?d->pgraph.dma_b:
+                                                       d->pgraph.dma_a,
+                                   texture->offset, texture->dirty,
+                                   texture->color_format,
+                                   texture->pitch);
+                    assert(glGetError()==GL_NO_ERROR);
+                    imported_glObjectLabelKHR(GL_TEXTURE,gl_texture,-1,buffer);
+                    while(glGetError()!=GL_NO_ERROR); //FIXME: This is necessary because GLX does always return a proc currently..
+                }
+            }
+
             glBindTexture(gl_target, gl_texture);
 
             if (!texture->dirty) continue;
