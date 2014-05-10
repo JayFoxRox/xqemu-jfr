@@ -37,6 +37,7 @@
 #include <GL/glext.h>
 #else
 #include <GL/gl.h>
+#include <GL/glext.h>
 #endif
 
 /* Used to hold data for the OpenGL context */
