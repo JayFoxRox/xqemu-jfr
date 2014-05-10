@@ -45,11 +45,17 @@ last = s;
 
   //FIXME: Forward to all MCPX components
 
-  /* southbridge chip contains and controls bootrom image.
-   * can't load it through loader.c because it overlaps with the bios...
-   * We really should just commandeer the entire top 16Mb.
-   */
-  mcpx_rom_init(s);
+  // Only the XMode 3 has an internal ROM
+  bool has_internal_rom = (s->xmode == 0x3);
+  if (!has_internal_rom) {
+    printf("Not XMode-3. Ignoring ROM settings!");
+  } else {
+    /* southbridge chip contains and controls bootrom image.
+     * can't load it through loader.c because it overlaps with the bios...
+     * We really should just commandeer the entire top 16Mb.
+     */
+    mcpx_rom_init(s);
+  }
 
   qemu_register_reset(mcpx_reset,s);
   

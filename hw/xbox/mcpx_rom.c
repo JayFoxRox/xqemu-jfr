@@ -37,7 +37,7 @@
 
 #include "hw/xbox/rc4.h" // UGLY.. do this differently?
 
-#include "jayfoxrox_keys.h" //FIXME: Remove once everything has a cli
+#include "keys.fox" //FIXME: Remove once everything has a cli
 #define warningPrintf(x,...) printf(x, ## __VA_ARGS__)
 #define errorPrintf(x,...) fprintf(stderr,x, ## __VA_ARGS__);
 #define debugPrintf(x,...) fprintf(stdout,x, ## __VA_ARGS__);
@@ -387,6 +387,8 @@ static int load_mcpx_rom(XBOX_MCPXState* s, const char* bootrom_file) {
     rc = read(fd, s->rom.bootrom_data, size);
     assert(rc == size);
 
+    printf("MCPX rom loaded\n");
+
     close(fd);
   }
   return 0;
@@ -402,6 +404,7 @@ void mcpx_rom_hide(struct XBOX_MCPXState* s)
     cpu_physical_memory_write_rom(bootrom_addr,
                                   s->rom.flash_data,
                                   bootrom_size);
+    printf("flash image written!\n");
   }
   s->rom.enabled = false;
 }
@@ -429,6 +432,7 @@ void mcpx_rom_show(struct XBOX_MCPXState* s) {
     cpu_physical_memory_read(bootrom_addr,
                              s->rom.flash_data,
                              bootrom_size);
+
     // And overlay the area with the MCPX ROM (generated or from ROM)
     if (s->rom.hle_mcpx_rom_code) {
 
@@ -455,6 +459,7 @@ void mcpx_rom_show(struct XBOX_MCPXState* s) {
       cpu_physical_memory_write_rom(bootrom_addr,
                                     s->rom.bootrom_data,
                                     bootrom_size);
+      printf("image written to memory\n");
     }
   }
 
@@ -467,9 +472,15 @@ static void mcpx_rom_reset_late(struct XBOX_MCPXState* s)
 
   printf("Late reset! 0x%X\n",s);
 
+  // Make the MCPX image visible
+  mcpx_rom_show(s);
+
   if (s->rom.hle_mcpx_rom_code) {
     // Emulate the MCPX startup
+    //FIXME: Make sure we are at 0xFFFF:FFF0
     emulate_mcpx_rom(s);
+  } else {
+    printf("Real bios should take over now!\n");
   }
 
   qemu_unregister_reset(mcpx_rom_reset_late, s);
@@ -478,8 +489,6 @@ static void mcpx_rom_reset_late(struct XBOX_MCPXState* s)
 
 void mcpx_rom_init(struct XBOX_MCPXState* s)
 {
-
-
 
   // Make sure we keep track wether the MCPX is enabled or not
   s->rom.enabled = false;
@@ -497,28 +506,12 @@ FIXME: Would this work?
 */
   }
 
-  // Only the XMode 3 has an internal ROM
-  bool has_internal_rom = (s->xmode == 0x3);
-  if (!has_internal_rom) {
-    if (mcpx_rom) {
-      warningPrintf("Not XMode-3. Ignoring ROM file!");
-    }
-    return;
-  }
-
   // So we have to create a virtual rom..
   if (mcpx_rom) {
     s->rom.hle_mcpx_rom_code = false;
     // Load the MCPX ROM from file  
     load_mcpx_rom(s,mcpx_rom);
   } else {
-    // Inject a breakpoint so we are notified of the CPU reseting
-/*
-FIXME!
-    if (kvm_enabled()) {
-        return kvm_insert_breakpoint(gdbserver_state->c_cpu, addr, len, type);
-    }
-*/
     s->rom.hle_mcpx_rom_code = true;
   }
 
@@ -528,20 +521,5 @@ FIXME!
 
 void mcpx_rom_reset(struct XBOX_MCPXState* s)
 {
-  printf("Added late reset for MCPX HLE\n");
   qemu_register_reset(mcpx_rom_reset_late, s);
-
-  debugPrintf("Resetting the MCPX ROM\n");
-
-  bool has_internal_rom = (s->xmode == 0x3);
-  if (!has_internal_rom) {
-    debugPrintf("Reset complete, no internal MCPX ROM\n");
-    return;
-  }
-
-  // Make the MCPX image visible
-  mcpx_rom_show(s);
-
-  debugPrintf("Reset complete\n");
-
 }

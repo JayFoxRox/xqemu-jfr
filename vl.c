@@ -440,7 +440,11 @@ static QemuOptsList qemu_machine_opts = {
             .type = QEMU_OPT_NUMBER,
             .help = "Xbox MCPX XMode (2 or 3)",
         },{
-            .name = "eeprom",
+            .name = "xbox_smc_version",
+            .type = QEMU_OPT_NUMBER,
+            .help = "Xbox SMC version",
+        },{
+            .name = "xbox_eeprom",
             .type = QEMU_OPT_STRING,
             .help = "Xbox EEPROM file",
         },{

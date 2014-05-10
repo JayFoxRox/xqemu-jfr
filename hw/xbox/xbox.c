@@ -38,7 +38,6 @@
 #include "exec/address-spaces.h"
 #include "qemu/config-file.h"
 
-#include "hw/xbox/smc.h"
 #include "hw/xbox/xbox_pci.h"
 #include "hw/xbox/nv2a_gpu.h"
 
@@ -158,7 +157,7 @@ void xbox_init_common(QEMUMachineInitArgs *args,
     /* Parse options */
     QemuOpts *machine_opts = qemu_opts_find(qemu_find_opts("machine"), 0);
     if (machine_opts) {
-        eeprom_filename = qemu_opt_get(machine_opts, "eeprom");
+        eeprom_filename = qemu_opt_get(machine_opts, "xbox_eeprom");
     }
 
     icc_bridge = qdev_create(NULL, TYPE_ICC_BRIDGE);
