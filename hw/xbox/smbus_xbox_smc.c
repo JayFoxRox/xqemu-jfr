@@ -122,7 +122,7 @@ typedef struct SMBusSMCDevice {
 #define LED_RED 0x0F
 #define LED_RED_2HZ 0x0C
 #define LED_RED_4HZ 0x0A
-#define LED_GREEN 0x0F
+#define LED_GREEN 0xF0
 #define LED_GREEN_2HZ 0xC0
 #define LED_GREEN_4HZ 0xA0
 
@@ -377,8 +377,8 @@ uint8_t smc_read_command(SMBusSMCDevice* smc_dev, uint8_t command)
 static void print_led_color_change(SMBusSMCDevice* smc_dev, uint8_t color) {
   const char* colors[] = {
     "Off",   // 00
-    "Green", // 10
     "Red",   // 01
+    "Green", // 10
     "Orange" // 11
   };
   if (smc_dev->led_color != color) {
@@ -524,7 +524,7 @@ static int smbus_smc_init(SMBusDevice *dev)
   // Set scratch register
   smc_dev->scratch = 0x00;
   //FIXME: Remove or make an option
-  if (1) {
+  if (0) {
     if (0) { smc_dev->scratch |= 0x02; } // Display fatal error
     if (1) { smc_dev->scratch |= 0x04; } // Skip boot anim hack
   }
