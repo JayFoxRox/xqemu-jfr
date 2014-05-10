@@ -22,18 +22,27 @@
 #include "hw/i2c/i2c.h"
 #include "hw/i2c/smbus.h"
 #include "qemu/timer.h"
+#include "qemu/config-file.h"
+#include "block/block.h"
+#include "sysemu/blockdev.h"
 
 #define DEBUG
 
 
 typedef struct SMBusSMCDevice {
     SMBusDevice smbusdev;
+    uint8_t last_command;
+    uint8_t last_value;
+    DriveInfo *dvdrom;
     QEMUTimer *led_timer;
     QEMUTimer *watchdog_timer;
+    uint8_t error_code;
+    bool audio_clamping;
     bool interrupts_enabled;
     uint8_t interrupt_reason;
     uint8_t led_mode;
-    uint8_t led_sequence;
+    uint8_t led_user_sequence;
+    uint8_t led_default_sequence;
     unsigned int led_color; //FIXME: Do we need this? Only helps with printing the LED color
     unsigned int led_step;
     uint8_t fan_speed;
@@ -66,6 +75,16 @@ typedef struct SMBusSMCDevice {
 #define         SMC_REG_POWER_CYCLE         0x40
 #define         SMC_REG_POWER_SHUTDOWN      0x80
 #define SMC_REG_TRAYSTATE           0x03
+#define         SMC_REG_TRAYSTATE_ACTIVE_FLAG 0x01
+#define         SMC_REG_TRAYSTATE_STATE_MASK  0x70
+#define         SMC_REG_TRAYSTATE_CLOSED      0x00
+#define         SMC_REG_TRAYSTATE_OPENED      0x10
+#define         SMC_REG_TRAYSTATE_EJECTING    0x20
+#define         SMC_REG_TRAYSTATE_OPENING     0x30
+#define         SMC_REG_TRAYSTATE_NO_MEDIA    0x40
+#define         SMC_REG_TRAYSTATE_CLOSING     0x50
+#define         SMC_REG_TRAYSTATE_MEDIA       0x60
+#define         SMC_REG_TRAYSTATE_RESET       0x70
 #define SMC_REG_AVPACK              0x04
 #define         SMC_REG_AVPACK_SCART        0x00
 #define         SMC_REG_AVPACK_HDTV         0x01
@@ -80,8 +99,10 @@ typedef struct SMBusSMCDevice {
 #define SMC_REG_LEDSEQ              0x08
 #define SMC_REG_CPUTEMP             0x09
 #define SMC_REG_BOARDTEMP           0x0a
+#define SMC_REG_AUDIO_CLAMPING      0x0b
 #define SMC_REG_TRAYEJECT           0x0c
 #define SMC_REG_INTACK		0x0d
+#define SMC_REG_ERROR_CODE           0x0e
 #define SMC_REG_INTSTATUS           0x11
 #define		SMC_REG_INTSTATUS_POWER		0x01
 #define		SMC_REG_INTSTATUS_TRAYCLOSED	0x02
@@ -90,10 +111,39 @@ typedef struct SMBusSMCDevice {
 #define		SMC_REG_INTSTATUS_AVPACK_UNPLUG	0x10
 #define		SMC_REG_INTSTATUS_EJECT_BUTTON	0x20
 #define		SMC_REG_INTSTATUS_TRAYCLOSING	0x40
+#define SMC_REG_LAST_COMMAND        0x16
+#define SMC_REG_LAST_VALUE          0x17
 #define SMC_REG_RESETONEJECT        0x19
 #define SMC_REG_INTEN               0x1a
 #define SMC_REG_SCRATCH             0x1b
 
+// States used in the default mode
+#define LED_OFF 0x00
+#define LED_RED 0x0F
+#define LED_RED_2HZ 0x0C
+#define LED_RED_4HZ 0x0A
+#define LED_GREEN 0x0F
+#define LED_GREEN_2HZ 0xC0
+#define LED_GREEN_4HZ 0xA0
+
+
+void smc_shutdown_system(SMBusSMCDevice* smc_dev)
+{
+    smc_dev->led_default_sequence = LED_OFF;
+    qemu_system_shutdown_request();
+}
+
+void smc_warm_reboot_system(SMBusSMCDevice* smc_dev)
+{
+    smc_dev->led_default_sequence = LED_OFF;
+    qemu_system_reset_request(); //FIXME: This should not clear RAM
+}
+
+void smc_cold_reboot_system(SMBusSMCDevice* smc_dev)
+{
+    smc_dev->led_default_sequence = LED_OFF;
+    qemu_system_reset_request(); //FIXME: This should clear RAM
+}
 
 static void smc_interrupt(SMBusSMCDevice* smc_dev, uint8_t reason) {
   if (smc_dev->interrupts_enabled) {
@@ -103,28 +153,53 @@ static void smc_interrupt(SMBusSMCDevice* smc_dev, uint8_t reason) {
 }
 
 static void smc_eject_tray(SMBusSMCDevice* smc_dev) {
-  // FIXME: Ask drive to eject!
-  assert(0);
+  if (!smc_dev->dvdrom) { return; }
+  BlockDriverState *bs = smc_dev->dvdrom->bdrv;
+  bdrv_dev_eject_request(bs,true);
+  smc_dev->led_default_sequence = LED_GREEN_2HZ;
+  //FIXME: Callback once the tray is opened!
 }
 
 static void smc_close_tray(SMBusSMCDevice* smc_dev) {
-  //FIXME: Ask to close tray
+  if (!smc_dev->dvdrom) { return; }
+  BlockDriverState *bs = smc_dev->dvdrom->bdrv;
+  //FIXME: What to use here?
+  smc_dev->led_default_sequence = LED_GREEN_2HZ;
+  //FIXME: Callback once the tray is closed!
+}
+
+static uint8_t smc_get_traystate(SMBusSMCDevice* smc_dev)
+{
+
+  //FIXME: Work on activity flag! - WWXD?
+
+  if (!smc_dev->dvdrom) { printf("DVD: No drive / Reset\n"); return SMC_REG_TRAYSTATE_RESET; }
+  BlockDriverState *bs = smc_dev->dvdrom->bdrv;
+
+  if (bdrv_dev_is_tray_open(bs)) {
+      printf("DVD: Tray opened\n");
+    return SMC_REG_TRAYSTATE_OPENED;
+  } else {
+    if (bdrv_dev_has_removable_media(bs)) {
+      printf("DVD: Media\n");
+      return SMC_REG_TRAYSTATE_MEDIA;
+    } else {
+      printf("DVD: No media\n");
+      return SMC_REG_TRAYSTATE_NO_MEDIA;
+    }
+  }
+  
   assert(0);
 }
 
-void smc_shutdown_system(SMBusSMCDevice* smc_dev)
-{
-    qemu_system_shutdown_request();
+static void smc_system_overheat_reaction(SMBusSMCDevice* smc_dev) {
+  smc_shutdown_system(smc_dev);
+  smc_dev->led_default_sequence = LED_RED; //FIXME: RED or RED_4HZ or even RED_2HZ?
+  //FIXME: Wait for temperature to drop!
 }
 
-void smc_warm_reboot_system(SMBusSMCDevice* smc_dev)
-{
-    qemu_system_reset_request(); //FIXME: This should not clear RAM
-}
-
-void smc_cold_reboot_system(SMBusSMCDevice* smc_dev)
-{
-    qemu_system_reset_request(); //FIXME: This should clear RAM
+static void smc_system_error_reaction(SMBusSMCDevice* smc_dev) {
+  smc_dev->led_default_sequence = LED_RED_4HZ;
 }
 
 void smc_press_eject(SMBusSMCDevice* smc_dev)
@@ -190,7 +265,8 @@ void smc_stop_watchdog(SMBusSMCDevice* smc_dev)
 
 void smc_write_command(SMBusSMCDevice* smc_dev, uint8_t command, uint8_t value)
 {
-
+    smc_dev->last_command = command;
+    smc_dev->last_value = value;
     switch(command) {
         case SMC_REG_VER:
             /* version string reset */
@@ -215,6 +291,10 @@ void smc_write_command(SMBusSMCDevice* smc_dev, uint8_t command, uint8_t value)
             } else { //FIXME: WWXD != 0x01?
               smc_close_tray(smc_dev);
             }
+            break;
+        case SMC_REG_ERROR_CODE:
+            smc_dev->error_code = value;
+            break;
         case SMC_REG_INTEN:
             smc_dev->interrupts_enabled |= (value == 0x00); //FIXME: WWXD != 0x00?
             break;
@@ -225,7 +305,7 @@ void smc_write_command(SMBusSMCDevice* smc_dev, uint8_t command, uint8_t value)
             smc_dev->led_mode = value;
             break;
         case SMC_REG_LEDSEQ:
-            smc_dev->led_sequence = value;
+            smc_dev->led_user_sequence = value;
             break;
         case SMC_REG_FANMODE:
             smc_dev->fan_mode = value;
@@ -235,6 +315,9 @@ void smc_write_command(SMBusSMCDevice* smc_dev, uint8_t command, uint8_t value)
             break;
         case SMC_REG_SCRATCH:
             smc_dev->scratch = value;
+            break;
+        case SMC_REG_AUDIO_CLAMPING:
+            smc_dev->audio_clamping = value;
             break;
         /* challenge response
          * (http://www.xbox-linux.org/wiki/PIC_Challenge_Handshake_Sequence) */
@@ -259,12 +342,20 @@ uint8_t smc_read_command(SMBusSMCDevice* smc_dev, uint8_t command)
         case SMC_REG_VER:
             return smc_dev->version_string[
                 smc_dev->version_string_index++%3];
+        case SMC_REG_ERROR_CODE:
+            return smc_dev->error_code;
+        case SMC_REG_LAST_COMMAND:
+            return smc_dev->last_command;
+        case SMC_REG_LAST_VALUE:
+            return smc_dev->last_value;
         case SMC_REG_AVPACK:
             return smc_dev->avpack;
         case SMC_REG_INTSTATUS:
             return smc_dev->interrupt_reason;
         case SMC_REG_SCRATCH:
             return smc_dev->scratch;
+        case SMC_REG_TRAYSTATE:
+            return smc_get_traystate(smc_dev);
         /* challenge request:
          * must be non-0 */
         case 0x1c:
@@ -286,8 +377,8 @@ uint8_t smc_read_command(SMBusSMCDevice* smc_dev, uint8_t command)
 static void print_led_color_change(SMBusSMCDevice* smc_dev, uint8_t color) {
   const char* colors[] = {
     "Off",   // 00
-    "Green", // 01
-    "Red",   // 10
+    "Green", // 10
+    "Red",   // 01
     "Orange" // 11
   };
   if (smc_dev->led_color != color) {
@@ -299,12 +390,18 @@ static void smc_led_timer_cb(SMBusSMCDevice* smc_dev) {
   smc_dev->led_step++;
   smc_dev->led_step %= 4;   
   // Calculate the color
-  bool led_green;
-  bool led_red;
-  //FIXME: respect LED Mode..?
-  led_green = ((smc_dev->led_sequence >> 4) >> smc_dev->led_step) & 0x1;
-  led_red = ((smc_dev->led_sequence >> 0) >> smc_dev->led_step) & 0x1;
-  unsigned int led_color = (led_green?2:0) | (led_red?1:0); //FIXME: Use an enum as type later?
+  uint8_t sequence = (smc_dev->led_mode == 0x00)?
+                      smc_dev->led_default_sequence:
+                      smc_dev->led_user_sequence;
+
+#if 0
+  printf("LED Sequence is 0x%02X\n",sequence);
+#endif
+
+  bool led_green = ((sequence >> 4) >> smc_dev->led_step) & 0x1;
+  bool led_red = ((sequence >> 0) >> smc_dev->led_step) & 0x1;
+
+  unsigned int led_color = (led_green?1:0) | (led_red?2:0); //FIXME: Use an enum as type later?
 #if 1
   print_led_color_change(smc_dev,led_color);
 #endif
@@ -370,10 +467,18 @@ static uint8_t smc_read_data(SMBusDevice *dev, uint8_t cmd, int n)
 }
 
 
-static void smbus_smc_reset(SMBusDevice *smc_dev)
+static void smbus_smc_reset(SMBusDevice *dev)
 {
+
+  SMBusSMCDevice *smc_dev = (SMBusSMCDevice *)dev;
+
+  // Get access to the DVD-ROM drive, we do this here so we are sure it exists,
+  // init sounded too risky for me
+  smc_dev->dvdrom = drive_get_by_index(IF_IDE, 1);
+
   // Don't reset because the SMC is always-on. Just set up a new watchdog for the recent boot
   smc_start_watchdog(smc_dev); 
+
 }
 
 static int smbus_smc_init(SMBusDevice *dev)
@@ -383,14 +488,13 @@ static int smbus_smc_init(SMBusDevice *dev)
   //FIXME: Not everything initialized yet
 
   smc_dev->version_string_index = 0;
-  smc_dev->version_string = NULL;
 
-/*
   QemuOpts *machine_opts = qemu_opts_find(qemu_find_opts("machine"), 0);
   if (machine_opts) {
-      smc_dev->version_string = qemu_opt_get(machine_opts, "smc_version");
+      smc_dev->version_string = qemu_opt_get(machine_opts, "xbox_smc_version");
+  } else {
+    smc_dev->version_string = NULL;
   }
-*/
   //FIXME: Make sure P01, P05 or DXB is passed as version
   if (smc_dev->version_string == NULL) {
     smc_dev->version_string = "P01";
@@ -400,22 +504,29 @@ static int smbus_smc_init(SMBusDevice *dev)
       strcmp(smc_dev->version_string,"P01") &&
       strcmp(smc_dev->version_string,"P05") &&
       strcmp(smc_dev->version_string,"P2L")) {
-    printf("Unknown smc_version!\n");
+    printf("Unknown xbox_smc_version!\n");
   }
 
   /* pretend to have a composite av pack plugged in */
   smc_dev->avpack = SMC_REG_AVPACK_COMPOSITE;
+
+  // LED state
+  smc_dev->led_mode = 0x00;
+  smc_dev->led_default_sequence = LED_GREEN; //WWXD?
+  smc_dev->led_user_sequence = LED_GREEN; //WWXD?
   
   // We want to be really annoying by default
   smc_dev->reset_on_press_eject = true;
 
   // Disable interrupts on startup
   smc_dev->interrupts_enabled = false;
-  
+
+  // Set scratch register
+  smc_dev->scratch = 0x00;
   //FIXME: Remove or make an option
-  {
-    // Skip boot anim hack
-    smc_dev->scratch = 0x04;
+  if (1) {
+    if (0) { smc_dev->scratch |= 0x02; } // Display fatal error
+    if (1) { smc_dev->scratch |= 0x04; } // Skip boot anim hack
   }
 
   // Create some timers for us
