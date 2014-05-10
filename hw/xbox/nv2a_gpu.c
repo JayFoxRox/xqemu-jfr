@@ -1594,10 +1594,10 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
                 }
                 if (imported_glObjectLabelKHR) {
                     char buffer[256];
-                    sprintf(buffer,"%s.0x%08X+0x%X: { dirty: %i;"
-                                   "color_format: %i;"
+                    sprintf(buffer,"NV2A: %s.0x%X+0x%X: { dirty: %i; "
+                                   "color_format: 0x%X; "
                                    "pitch: %i }",
-                                   texture->dma_select?"A":"B",
+                                   texture->dma_select?"B":"A",
                                    texture->dma_select?d->pgraph.dma_b:
                                                        d->pgraph.dma_a,
                                    texture->offset, texture->dirty,
