@@ -578,13 +578,72 @@
 #   define NV097_SET_SHADER_STAGE_PROGRAM                     0x00971E70
 #   define NV097_SET_SHADER_OTHER_STAGE_INPUT                 0x00971E78
 #   define NV097_SET_TRANSFORM_EXECUTION_MODE                 0x00971E94
-#       define NV_097_SET_TRANSFORM_EXECUTION_MODE_MODE           0x00000003
-#       define NV_097_SET_TRANSFORM_EXECUTION_MODE_RANGE_MODE     0xFFFFFFFC
+#       define NV097_SET_TRANSFORM_EXECUTION_MODE_MODE            0x00000003
+#       define NV097_SET_TRANSFORM_EXECUTION_MODE_RANGE_MODE      0xFFFFFFFC
 #   define NV097_SET_TRANSFORM_PROGRAM_CXT_WRITE_EN           0x00971E98
 #   define NV097_SET_TRANSFORM_PROGRAM_LOAD                   0x00971E9C
 #   define NV097_SET_TRANSFORM_PROGRAM_START                  0x00971EA0
 #   define NV097_SET_TRANSFORM_CONSTANT_LOAD                  0x00971EA4
 
+#   define NV097_SET_ALPHA_TEST_ENABLE                        0x00970300
+#       define NV097_SET_ALPHA_TEST_ENABLE_FALSE                  0x00000000
+#       define NV097_SET_ALPHA_TEST_ENABLE_TRUE                   0x00000001
+#   define NV097_SET_BLEND_ENABLE                             0x00970304
+#       define NV097_SET_BLEND_ENABLE_FALSE                       0x00000000
+#       define NV097_SET_BLEND_ENABLE_TRUE                        0x00000001
+#   define NV097_SET_CULL_FACE_ENABLE                         0x00970308
+#       define NV097_SET_CULL_FACE_ENABLE_FALSE                   0x00000000
+#       define NV097_SET_CULL_FACE_ENABLE_TRUE                    0x00000001
+#   define NV097_SET_DEPTH_TEST_ENABLE                        0x0097030c
+#       define NV097_SET_DEPTH_TEST_ENABLE_FALSE                  0x00000000
+#       define NV097_SET_DEPTH_TEST_ENABLE_TRUE                   0x00000001
+
+#   define NV097_SET_ALPHA_REF                               0x00970340
+
+// These are comparision functions and use map_gl_compare_func
+#   define NV097_SET_DEPTH_FUNC                              0x00970354
+#   define NV097_SET_ALPHA_FUNC                              0x0097033c
+
+#   define NV097_SET_BLEND_FUNC_SFACTOR                      0x00970344
+#       define NV097_SET_BLEND_FUNC_SFACTOR_ZERO                  0x00000000
+#       define NV097_SET_BLEND_FUNC_SFACTOR_ONE                   0x00000001
+#       define NV097_SET_BLEND_FUNC_SFACTOR_SRC_COLOR             0x00000300
+#       define NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_SRC_COLOR   0x00000301
+#       define NV097_SET_BLEND_FUNC_SFACTOR_SRC_ALPHA             0x00000302
+#       define NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_SRC_ALPHA   0x00000303
+#       define NV097_SET_BLEND_FUNC_SFACTOR_DST_ALPHA             0x00000304
+#       define NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_DST_ALPHA   0x00000305
+#       define NV097_SET_BLEND_FUNC_SFACTOR_DST_COLOR             0x00000306
+#       define NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_DST_COLOR   0x00000307
+#       define NV097_SET_BLEND_FUNC_SFACTOR_SRC_ALPHA_SATURATE    0x00000308
+#       define NV097_SET_BLEND_FUNC_SFACTOR_CONSTANT_COLOR        0x00008001
+#       define NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_CONSTANT_COLOR 0x00008002
+#       define NV097_SET_BLEND_FUNC_SFACTOR_CONSTANT_ALPHA        0x00008003
+#       define NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_CONSTANT_ALPHA 0x00008004
+#   define NV097_SET_BLEND_FUNC_DFACTOR                      0x00970348
+#       define NV097_SET_BLEND_FUNC_DFACTOR_ZERO                  0x00000000
+#       define NV097_SET_BLEND_FUNC_DFACTOR_ONE                   0x00000001
+#       define NV097_SET_BLEND_FUNC_DFACTOR_SRC_COLOR             0x00000300
+#       define NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_SRC_COLOR   0x00000301
+#       define NV097_SET_BLEND_FUNC_DFACTOR_SRC_ALPHA             0x00000302
+#       define NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_SRC_ALPHA   0x00000303
+#       define NV097_SET_BLEND_FUNC_DFACTOR_DST_ALPHA             0x00000304
+#       define NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_DST_ALPHA   0x00000305
+#       define NV097_SET_BLEND_FUNC_DFACTOR_DST_COLOR             0x00000306
+#       define NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_DST_COLOR   0x00000307
+#       define NV097_SET_BLEND_FUNC_DFACTOR_SRC_ALPHA_SATURATE    0x00000308
+#       define NV097_SET_BLEND_FUNC_DFACTOR_CONSTANT_COLOR        0x00008001
+#       define NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_CONSTANT_COLOR 0x00008002
+#       define NV097_SET_BLEND_FUNC_DFACTOR_CONSTANT_ALPHA        0x00008003
+#       define NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_CONSTANT_ALPHA 0x00008004
+
+#   define NV097_SET_CULL_FACE                               0x0097039c
+#       define NV097_SET_CULL_FACE_FRONT                          0x00000404
+#       define NV097_SET_CULL_FACE_BACK                           0x00000405
+#       define NV097_SET_CULL_FACE_FRONT_AND_BACK                 0x00000408
+#   define NV097_SET_FRONT_FACE                              0x009703a0
+#       define NV097_SET_FRONT_FACE_CW                            0x00000900
+#       define NV097_SET_FRONT_FACE_CCW                           0x00000901
 
 static const GLenum kelvin_primitive_map[] = {
     0,
@@ -865,6 +924,22 @@ typedef struct KelvinState {
 
     unsigned int inline_buffer_length;
     InlineVertexBufferEntry inline_buffer[NV2A_GPU_MAX_BATCH_LENGTH];
+
+    bool alpha_test_enable;
+    bool blend_enable;
+    bool cull_face_enable;
+    bool depth_test_enable;
+
+    uint32_t depth_func;
+    uint32_t alpha_func;
+    float alpha_ref;
+
+    uint32_t blend_func_sfactor;
+    uint32_t blend_func_dfactor;
+
+    uint32_t cull_face;
+    uint32_t front_face;
+
 } KelvinState;
 
 typedef struct ContextSurfaces2DState {
@@ -1102,6 +1177,163 @@ typedef struct NV2A_GPUState {
 
 #define NV2A_GPU_DEVICE(obj) \
     OBJECT_CHECK(NV2A_GPUState, (obj), "nv2a")
+
+
+static inline void set_gl_state(GLenum cap, bool state)
+{
+    if (state) {
+        glEnable(cap);
+    } else {
+        glDisable(cap);
+    }
+}
+
+static inline void set_gl_front_face(uint32_t mode) {
+    GLenum gl_mode;
+    switch(mode) {
+        case NV097_SET_FRONT_FACE_CW: gl_mode = GL_CW; break;
+        case NV097_SET_FRONT_FACE_CCW: gl_mode = GL_CCW; break;
+        default:
+            assert(0);
+    }
+    glFrontFace(gl_mode);
+}
+
+static inline void set_gl_cull_face(uint32_t mode) {
+    GLenum gl_mode;
+    switch(mode) {
+        case NV097_SET_CULL_FACE_FRONT: gl_mode = GL_FRONT; break;
+        case NV097_SET_CULL_FACE_BACK: gl_mode = GL_BACK; break;
+        case NV097_SET_CULL_FACE_FRONT_AND_BACK:
+          gl_mode = GL_FRONT_AND_BACK;
+          break;
+        default:
+            assert(0);
+    }
+    glCullFace(gl_mode);
+}
+
+static inline GLenum map_gl_compare_func(uint32_t func)
+{
+    GLenum gl_func;
+    switch(func) {
+        case 0x200: gl_func = GL_NEVER;    break;
+        case 0x201: gl_func = GL_LESS;     break;
+        case 0x202: gl_func = GL_EQUAL;    break;
+        case 0x203: gl_func = GL_LEQUAL;   break;
+        case 0x204: gl_func = GL_GREATER;  break;
+        case 0x205: gl_func = GL_NOTEQUAL; break;
+        case 0x206: gl_func = GL_GEQUAL;   break;
+        case 0x207: gl_func = GL_ALWAYS;   break;
+        default:
+            assert(0);
+    }
+    return gl_func;
+}
+
+static inline void set_gl_blend_func(uint32_t sfactor, uint32_t dfactor) {
+    GLenum gl_sfactor, gl_dfactor;
+    switch(sfactor) {
+        case NV097_SET_BLEND_FUNC_SFACTOR_ZERO:
+            gl_sfactor = GL_ZERO;
+            break;
+        case NV097_SET_BLEND_FUNC_SFACTOR_ONE:
+            gl_sfactor = GL_ONE;
+            break;
+        case NV097_SET_BLEND_FUNC_SFACTOR_SRC_COLOR:
+            gl_sfactor = GL_SRC_COLOR;
+            break;
+        case NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_SRC_COLOR:
+            gl_sfactor = GL_ONE_MINUS_SRC_COLOR;
+            break;
+        case NV097_SET_BLEND_FUNC_SFACTOR_SRC_ALPHA:
+            gl_sfactor = GL_SRC_ALPHA;
+            break;
+        case NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_SRC_ALPHA:
+            gl_sfactor = GL_ONE_MINUS_SRC_ALPHA;
+            break;
+        case NV097_SET_BLEND_FUNC_SFACTOR_DST_ALPHA:
+            gl_sfactor = GL_DST_ALPHA;
+            break;
+        case NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_DST_ALPHA:
+            gl_sfactor = GL_ONE_MINUS_DST_ALPHA;
+            break;
+        case NV097_SET_BLEND_FUNC_SFACTOR_DST_COLOR:
+            gl_sfactor = GL_DST_COLOR;
+            break;
+        case NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_DST_COLOR:
+            gl_sfactor = GL_ONE_MINUS_DST_COLOR;
+            break;
+        case NV097_SET_BLEND_FUNC_SFACTOR_SRC_ALPHA_SATURATE:
+            gl_sfactor = GL_SRC_ALPHA_SATURATE;
+            break;
+        case NV097_SET_BLEND_FUNC_SFACTOR_CONSTANT_COLOR:
+            gl_sfactor = GL_CONSTANT;
+            break;
+        case NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_CONSTANT_COLOR:
+            gl_sfactor = GL_ONE_MINUS_CONSTANT_COLOR;
+            break;
+        case NV097_SET_BLEND_FUNC_SFACTOR_CONSTANT_ALPHA:
+            gl_sfactor = GL_CONSTANT_ALPHA;
+            break;
+        case NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_CONSTANT_ALPHA:
+            gl_sfactor = GL_ONE_MINUS_CONSTANT_ALPHA;
+            break;
+        default:
+            assert(0);
+    }
+    switch(dfactor) {
+        case NV097_SET_BLEND_FUNC_DFACTOR_ZERO:
+            gl_dfactor = GL_ZERO;
+            break;
+        case NV097_SET_BLEND_FUNC_DFACTOR_ONE:
+            gl_dfactor = GL_ONE;
+            break;
+        case NV097_SET_BLEND_FUNC_DFACTOR_SRC_COLOR:
+            gl_dfactor = GL_SRC_COLOR;
+            break;
+        case NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_SRC_COLOR:
+            gl_dfactor = GL_ONE_MINUS_SRC_COLOR;
+            break;
+        case NV097_SET_BLEND_FUNC_DFACTOR_SRC_ALPHA:
+            gl_dfactor = GL_SRC_ALPHA;
+            break;
+        case NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_SRC_ALPHA:
+            gl_dfactor = GL_ONE_MINUS_SRC_ALPHA;
+            break;
+        case NV097_SET_BLEND_FUNC_DFACTOR_DST_ALPHA:
+            gl_dfactor = GL_DST_ALPHA;
+            break;
+        case NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_DST_ALPHA:
+            gl_dfactor = GL_ONE_MINUS_DST_ALPHA;
+            break;
+        case NV097_SET_BLEND_FUNC_DFACTOR_DST_COLOR:
+            gl_dfactor = GL_DST_COLOR;
+            break;
+        case NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_DST_COLOR:
+            gl_dfactor = GL_ONE_MINUS_DST_COLOR;
+            break;
+        case NV097_SET_BLEND_FUNC_DFACTOR_SRC_ALPHA_SATURATE:
+            gl_dfactor = GL_SRC_ALPHA_SATURATE;
+            break;
+        case NV097_SET_BLEND_FUNC_DFACTOR_CONSTANT_COLOR:
+            gl_dfactor = GL_CONSTANT_COLOR;
+            break;
+        case NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_CONSTANT_COLOR:
+            gl_dfactor = GL_ONE_MINUS_CONSTANT_COLOR;
+            break;
+        case NV097_SET_BLEND_FUNC_DFACTOR_CONSTANT_ALPHA:
+            gl_dfactor = GL_CONSTANT_ALPHA;
+            break;
+        case NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_CONSTANT_ALPHA:
+            gl_dfactor = GL_ONE_MINUS_CONSTANT_ALPHA;
+            break;
+        default:
+            assert(0);
+    }
+    glBlendFunc(gl_sfactor,gl_dfactor);
+}
+
 
 static void reg_log_read(int block, hwaddr addr, uint64_t val);
 static void reg_log_write(int block, hwaddr addr, uint64_t val);
@@ -2987,9 +3219,9 @@ static void pgraph_method(NV2A_GPUState *d,
 
     case NV097_SET_TRANSFORM_EXECUTION_MODE:
         SET_MASK(pg->regs[NV_PGRAPH_CSV0_D], NV_PGRAPH_CSV0_D_MODE,
-                 GET_MASK(parameter, NV_097_SET_TRANSFORM_EXECUTION_MODE_MODE));
+                 GET_MASK(parameter, NV097_SET_TRANSFORM_EXECUTION_MODE_MODE));
         SET_MASK(pg->regs[NV_PGRAPH_CSV0_D], NV_PGRAPH_CSV0_D_RANGE_MODE,
-                 GET_MASK(parameter, NV_097_SET_TRANSFORM_EXECUTION_MODE_RANGE_MODE));
+                 GET_MASK(parameter, NV097_SET_TRANSFORM_EXECUTION_MODE_RANGE_MODE));
         break;
     case NV097_SET_TRANSFORM_PROGRAM_CXT_WRITE_EN:
         kelvin->enable_vertex_program_write = parameter;
@@ -3016,6 +3248,43 @@ static void pgraph_method(NV2A_GPUState *d,
         NV2A_GPU_DPRINTF("load to %d\n", parameter);
         break;
 
+    case NV097_SET_ALPHA_TEST_ENABLE:
+        set_gl_state(GL_ALPHA_TEST,kelvin->alpha_test_enable = parameter);
+        break;
+    case NV097_SET_BLEND_ENABLE:
+        set_gl_state(GL_BLEND,kelvin->blend_enable = parameter);
+        break;
+    case NV097_SET_CULL_FACE_ENABLE:
+        set_gl_state(GL_CULL_FACE,kelvin->cull_face_enable = parameter);
+        break;
+    case NV097_SET_DEPTH_TEST_ENABLE:
+        set_gl_state(GL_DEPTH_TEST,kelvin->depth_test_enable = parameter);
+        break;
+    case NV097_SET_DEPTH_FUNC:
+        glDepthFunc(map_gl_compare_func(kelvin->depth_func = parameter));
+        break;
+    case NV097_SET_ALPHA_FUNC:
+        glAlphaFunc(map_gl_compare_func(kelvin->alpha_func = parameter),
+                    kelvin->alpha_ref);
+        break;
+    case NV097_SET_ALPHA_REF:
+        glAlphaFunc(map_gl_compare_func(kelvin->alpha_func),
+                    kelvin->alpha_ref = *(float*)&parameter);
+        break;
+    case NV097_SET_BLEND_FUNC_SFACTOR:
+        set_gl_blend_func(kelvin->blend_func_sfactor = parameter,
+                          kelvin->blend_func_dfactor);
+        break;
+    case NV097_SET_BLEND_FUNC_DFACTOR:
+        set_gl_blend_func(kelvin->blend_func_sfactor,
+                          kelvin->blend_func_dfactor = parameter);
+        break;
+    case NV097_SET_CULL_FACE:
+        set_gl_cull_face(kelvin->cull_face = parameter);
+        break;
+    case NV097_SET_FRONT_FACE:
+        set_gl_front_face(kelvin->front_face = parameter);
+        break;
     default:
         NV2A_GPU_DPRINTF("    unhandled  (0x%02x 0x%08x)\n",
                      object->graphics_class, method);
