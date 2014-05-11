@@ -479,6 +479,10 @@
 #   define NV097_SET_CLIP_MIN                                 0x00970394
 #   define NV097_SET_CLIP_MAX                                 0x00970398
 #   define NV097_SET_COMPOSITE_MATRIX                         0x00970680
+#   define NV097_SET_TEXTURE_MATRIX0                          0x009706c0
+#   define NV097_SET_TEXTURE_MATRIX1                          0x00970700
+#   define NV097_SET_TEXTURE_MATRIX2                          0x00970740
+#   define NV097_SET_TEXTURE_MATRIX3                          0x00970780
 #   define NV097_SET_VIEWPORT_OFFSET                          0x00970A20
 #   define NV097_SET_COMBINER_FACTOR0                         0x00970A60
 #   define NV097_SET_COMBINER_FACTOR1                         0x00970A80
@@ -644,6 +648,11 @@
 #   define NV097_SET_FRONT_FACE                              0x009703a0
 #       define NV097_SET_FRONT_FACE_CW                            0x00000900
 #       define NV097_SET_FRONT_FACE_CCW                           0x00000901
+
+#   define NV097_SET_EDGE_FLAG                               0x009716bc
+#       define NV097_SET_EDGE_FLAG_FALSE                          0x00000000
+#       define NV097_SET_EDGE_FLAG_TRUE                           0x00000001
+
 
 static const GLenum kelvin_primitive_map[] = {
     0,
@@ -940,6 +949,8 @@ typedef struct KelvinState {
     uint32_t cull_face;
     uint32_t front_face;
 
+    bool edge_flag;
+
 } KelvinState;
 
 typedef struct ContextSurfaces2DState {
@@ -1024,7 +1035,11 @@ typedef struct PGRAPHState {
     GLuint gl_program;
 
     float composite_matrix[16];
-    GLint composite_matrix_location;
+
+    float texture_matrix0[16];
+    float texture_matrix1[16];
+    float texture_matrix2[16];
+    float texture_matrix3[16];
 
     GloContext *gl_context;
     GLuint gl_framebuffer;
@@ -1587,6 +1602,8 @@ static void kelvin_bind_vertex_attributes(NV2A_GPUState *d,
 {
     int i;
 
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, "NV2A: kelvin_bind_vertex_attributes");
+
     for (i=0; i<NV2A_GPU_VERTEXSHADER_ATTRIBUTES; i++) {
         VertexAttribute *attribute = &kelvin->vertex_attributes[i];
         if (attribute->count) {
@@ -1618,6 +1635,9 @@ static void kelvin_bind_vertex_attributes(NV2A_GPUState *d,
             glVertexAttrib4ubv(i, (GLubyte *)&attribute->inline_value);
         }
     }
+
+    glPopDebugGroup();
+
 }
 
 static void kelvin_bind_vertex_program(KelvinState *kelvin)
@@ -1776,7 +1796,10 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
 {
     int i;
 
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, "NV2A: pgraph_bind_textures");
+
     for (i=0; i<NV2A_GPU_MAX_TEXTURES; i++) {
+
         Texture *texture = &d->pgraph.textures[i];
 
         if (texture->dimensionality != 2) continue;
@@ -1939,6 +1962,9 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
         }
 
     }
+
+    glPopDebugGroup();
+
 }
 
 static guint shader_hash(gconstpointer key)
@@ -1985,6 +2011,10 @@ static GLuint generate_shaders(ShaderState state)
 "attribute vec4 multiTexCoord3;\n"
 
 "uniform mat4 composite;\n"
+"uniform mat4 textureMatrix0;\n"
+"uniform mat4 textureMatrix1;\n"
+"uniform mat4 textureMatrix2;\n"
+"uniform mat4 textureMatrix3;\n"
 "uniform mat4 invViewport;\n"
 "void main() {\n"
 "   gl_Position = invViewport * (position * composite);\n"
@@ -1994,10 +2024,10 @@ static GLuint generate_shaders(ShaderState state)
 //"   gl_Position.y = -(gl_Position.y - 240.0) / 240.0;\n"
 "   gl_Position.z = gl_Position.z * 2.0 - gl_Position.w;\n"
 "   gl_FrontColor = diffuse;\n"
-"   gl_TexCoord[0] = multiTexCoord0;\n"
-"   gl_TexCoord[1] = multiTexCoord1;\n"
-"   gl_TexCoord[2] = multiTexCoord2;\n"
-"   gl_TexCoord[3] = multiTexCoord3;\n"
+"   gl_TexCoord[0] = textureMatrix0*multiTexCoord0;\n"
+"   gl_TexCoord[1] = textureMatrix1*multiTexCoord1;\n"
+"   gl_TexCoord[2] = textureMatrix2*multiTexCoord2;\n"
+"   gl_TexCoord[3] = textureMatrix3*multiTexCoord3;\n"
 "}\n";
 
         glShaderSource(vertex_shader, 1, &vertex_shader_code, 0);
@@ -2153,6 +2183,8 @@ static void pgraph_bind_shaders(PGRAPHState *pg)
     glUseProgram(pg->gl_program);
 
 
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, "NV2A: update combiner constants");
+
     /* update combiner constants */
     for (i = 0; i<= 8; i++) {
         uint32_t constant[2];
@@ -2182,11 +2214,21 @@ static void pgraph_bind_shaders(PGRAPHState *pg)
         }
     }
 
-    /* update fixed function composite matrix */
-    if (fixed_function) {
-        GLint comLoc = glGetUniformLocation(pg->gl_program, "composite");
-        glUniformMatrix4fv(comLoc, 1, GL_FALSE, pg->composite_matrix);
+    glPopDebugGroup();
 
+    /* update fixed function uniforms */
+    if (fixed_function) {
+        GLint comMatLoc = glGetUniformLocation(pg->gl_program, "composite");
+        glUniformMatrix4fv(comMatLoc, 1, GL_FALSE, pg->composite_matrix);
+
+        GLint texMat0Loc = glGetUniformLocation(pg->gl_program, "textureMatrix0");
+        glUniformMatrix4fv(texMat0Loc, 1, GL_FALSE, pg->texture_matrix0);
+        GLint texMat1Loc = glGetUniformLocation(pg->gl_program, "textureMatrix1");
+        glUniformMatrix4fv(texMat1Loc, 1, GL_FALSE, pg->texture_matrix1);
+        GLint texMat2Loc = glGetUniformLocation(pg->gl_program, "textureMatrix2");
+        glUniformMatrix4fv(texMat2Loc, 1, GL_FALSE, pg->texture_matrix2);
+        GLint texMat3Loc = glGetUniformLocation(pg->gl_program, "textureMatrix3");
+        glUniformMatrix4fv(texMat3Loc, 1, GL_FALSE, pg->texture_matrix3);
 
         float zclip_max = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMAX];
         float zclip_min = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMIN];
@@ -2360,6 +2402,8 @@ static void pgraph_init(PGRAPHState *pg)
     pg->gl_context = glo_context_create(GLO_FF_DEFAULT);
     assert(pg->gl_context);
 
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, "NV2A: pgraph_init");
+
     /* Check context capabilities */
     const GLubyte *extensions = glGetString(GL_EXTENSIONS);
 
@@ -2408,15 +2452,20 @@ static void pgraph_init(PGRAPHState *pg)
     pg->shaders_dirty = true;
 
     /* generate textures */
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, "NV2A: generate textures");
     for (i = 0; i < NV2A_GPU_MAX_TEXTURES; i++) {
         Texture *texture = &pg->textures[i];
         glGenTextures(1, &texture->gl_texture);
         glGenTextures(1, &texture->gl_texture_rect);
     }
+    glPopDebugGroup();
 
     pg->shader_cache = g_hash_table_new(shader_hash, shader_equal);
 
     assert(glGetError() == GL_NO_ERROR);
+
+
+    glPopDebugGroup();
 
     glo_set_current(NULL);
 }
@@ -2432,6 +2481,8 @@ static void pgraph_destroy(PGRAPHState *pg)
 
     glo_set_current(pg->gl_context);
 
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, "NV2A: pgraph_destroy");
+
     glDeleteRenderbuffersEXT(1, &pg->gl_renderbuffer);
     glDeleteFramebuffersEXT(1, &pg->gl_framebuffer);
 
@@ -2440,6 +2491,8 @@ static void pgraph_destroy(PGRAPHState *pg)
         glDeleteTextures(1, &texture->gl_texture);
         glDeleteTextures(1, &texture->gl_texture_rect);
     }
+
+    glPopDebugGroup();
 
     glo_set_current(NULL);
 
@@ -2751,6 +2804,27 @@ static void pgraph_method(NV2A_GPUState *d,
             NV097_SET_COMPOSITE_MATRIX + 0x3c:
         slot = (class_method - NV097_SET_COMPOSITE_MATRIX) / 4;
         pg->composite_matrix[slot] = *(float*)&parameter;
+        break;
+
+    case NV097_SET_TEXTURE_MATRIX0 ...
+            NV097_SET_TEXTURE_MATRIX0 + 0x3c:
+        slot = (class_method - NV097_SET_TEXTURE_MATRIX0) / 4;
+        pg->texture_matrix0[slot] = *(float*)&parameter;
+        break;
+    case NV097_SET_TEXTURE_MATRIX1 ...
+            NV097_SET_TEXTURE_MATRIX1 + 0x3c:
+        slot = (class_method - NV097_SET_TEXTURE_MATRIX1) / 4;
+        pg->texture_matrix1[slot] = *(float*)&parameter;
+        break;
+    case NV097_SET_TEXTURE_MATRIX2 ...
+            NV097_SET_TEXTURE_MATRIX2 + 0x3c:
+        slot = (class_method - NV097_SET_TEXTURE_MATRIX2) / 4;
+        pg->texture_matrix2[slot] = *(float*)&parameter;
+        break;
+    case NV097_SET_TEXTURE_MATRIX3 ...
+            NV097_SET_TEXTURE_MATRIX3 + 0x3c:
+        slot = (class_method - NV097_SET_TEXTURE_MATRIX3) / 4;
+        pg->texture_matrix3[slot] = *(float*)&parameter;
         break;
 
     case NV097_SET_VIEWPORT_OFFSET ...
@@ -3285,9 +3359,22 @@ static void pgraph_method(NV2A_GPUState *d,
     case NV097_SET_FRONT_FACE:
         set_gl_front_face(kelvin->front_face = parameter);
         break;
+    case NV097_SET_EDGE_FLAG:
+        glEdgeFlag((kelvin->edge_flag = parameter)?GL_TRUE:GL_FALSE);
+        break;
     default:
         NV2A_GPU_DPRINTF("    unhandled  (0x%02x 0x%08x)\n",
                      object->graphics_class, method);
+        {
+            char buffer[64];
+            sprintf(buffer,"NV2A: unhandled  (0x%02x 0x%08x)",
+                    object->graphics_class, 
+                    method);
+            glDebugMessageInsert(GL_DEBUG_SOURCE_APPLICATION,
+                                 GL_DEBUG_TYPE_MARKER, 
+                                 0, GL_DEBUG_SEVERITY_NOTIFICATION, -1, 
+                                 buffer);
+        }
         break;
     }
     qemu_mutex_unlock(&d->pgraph.lock);
