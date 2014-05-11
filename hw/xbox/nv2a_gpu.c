@@ -541,6 +541,7 @@
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8 0x12
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8             0x19
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_X8R8G8B8 0x1E
+#           define NV097_SET_TEXTURE_FORMAT_COLOR_LC_IMAGE_CR8YB8CB8YA8 0x24
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_Y16_FIXED 0x30
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8B8G8R8       0x3A
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8B8G8R8 0x3F
@@ -687,12 +688,28 @@ static const GLenum kelvin_texture_mag_filter_map[] = {
     GL_LINEAR /* TODO: Convolution filter... */
 };
 
+static inline void* convert_a8r8g8b8_to_a8r8g8b8(unsigned int w, unsigned int h, unsigned int p, void* in)
+{
+    assert(w*4 < p);
+    size_t size = p*h*4;
+    void* out = g_malloc(size);
+    memcpy(out,in,size);
+    return out;
+}
+
+static inline void* convert_cr8yb8cb8ya8_to_a8r8g8b8(unsigned int w, unsigned int h, unsigned int p, void* in)
+{
+    //FIXME: Do the actual conversion..
+    return convert_a8r8g8b8_to_a8r8g8b8(w,h,p,in);
+}
+
 typedef struct ColorFormatInfo {
     unsigned int bytes_per_pixel;
     bool linear;
     GLint gl_internal_format;
     GLenum gl_format;
     GLenum gl_type;
+    void*(*converter)(unsigned int w, unsigned int h, unsigned int p, void*);
 } ColorFormatInfo;
 
 static const ColorFormatInfo kelvin_color_format_map[66] = {
@@ -708,6 +725,9 @@ static const ColorFormatInfo kelvin_color_format_map[66] = {
         {4, false, GL_RGBA, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV},
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_X8R8G8B8] =
         {4, false, GL_RGB,  GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV},
+
+    [NV097_SET_TEXTURE_FORMAT_COLOR_LC_IMAGE_CR8YB8CB8YA8] =
+        {4, false, GL_RGB,  GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV, convert_cr8yb8cb8ya8_to_a8r8g8b8},
 
     /* TODO: 8-bit palettized textures */
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_I8_A8R8G8B8] =
@@ -1885,6 +1905,12 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
             assert(texture->offset < dma_len);
             texture_data += texture->offset;
 
+            if (f.converter != NULL) {
+                /* FIXME: Unswizzle before? */
+                texture_data = f.converter(width,height,texture->pitch,texture_data);
+                assert(texture_data != NULL);
+            }
+
             NV2A_GPU_DPRINTF(" texture %d is format 0x%x, (%d, %d; %d),"
                             " filter %x %x, levels %d-%d %d bias %d\n",
                          i, texture->color_format,
@@ -1953,6 +1979,11 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
                     height /= 2;
                 }
 
+            }
+
+            /* Free the buffer if this texture had to be converted */
+            if (f.converter != NULL) {
+                g_free(texture_data);
             }
 
             texture->dirty = false;
@@ -3366,8 +3397,8 @@ static void pgraph_method(NV2A_GPUState *d,
         NV2A_GPU_DPRINTF("    unhandled  (0x%02x 0x%08x)\n",
                      object->graphics_class, method);
         {
-            char buffer[64];
-            sprintf(buffer,"NV2A: unhandled  (0x%02x 0x%08x)",
+            char buffer[128];
+            sprintf(buffer,"NV2A: unhandled method in class 0x%02x: 0x%08x",
                     object->graphics_class, 
                     method);
             glDebugMessageInsert(GL_DEBUG_SOURCE_APPLICATION,
