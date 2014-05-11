@@ -688,19 +688,31 @@ static const GLenum kelvin_texture_mag_filter_map[] = {
     GL_LINEAR /* TODO: Convolution filter... */
 };
 
-static inline void* convert_a8r8g8b8_to_a8r8g8b8(unsigned int w, unsigned int h, unsigned int p, void* in)
+static inline void* convert_a8r8g8b8_to_a8r8g8b8(unsigned int w, unsigned int h, unsigned int pitch, unsigned int levels, const void* in)
 {
-    assert(w*4 < p);
-    size_t size = p*h*4;
-    void* out = g_malloc(size);
-    memcpy(out,in,size);
+printf("%i levels\n",levels);
+    assert(w*4 < pitch);
+    assert((levels == 1) || (pitch == w*4));
+    void* out = g_malloc(pitch*h*levels); //FIXME: use proper formula to allocate just enough bytes
+    uint8_t* in_ptr = in;
+    uint8_t* out_ptr = out;
+    unsigned int level;
+    for(level = 0; level < levels; level++) {
+        size_t size = w*h;
+        memcpy(out_ptr,in_ptr,size);
+        // Next level..
+        out_ptr += size;
+        in_ptr += size;
+        w /= 2;
+        h /= 2;
+    }
     return out;
 }
 
-static inline void* convert_cr8yb8cb8ya8_to_a8r8g8b8(unsigned int w, unsigned int h, unsigned int p, void* in)
+static inline void* convert_cr8yb8cb8ya8_to_a8r8g8b8(unsigned int w, unsigned int h, unsigned int pitch, unsigned int levels, const void* in)
 {
     //FIXME: Do the actual conversion..
-    return convert_a8r8g8b8_to_a8r8g8b8(w,h,p,in);
+    return convert_a8r8g8b8_to_a8r8g8b8(w,h,pitch,levels,in);
 }
 
 typedef struct ColorFormatInfo {
@@ -709,7 +721,7 @@ typedef struct ColorFormatInfo {
     GLint gl_internal_format;
     GLenum gl_format;
     GLenum gl_type;
-    void*(*converter)(unsigned int w, unsigned int h, unsigned int p, void*);
+    void*(*converter)(unsigned int w, unsigned int h, unsigned int pitch, unsigned int levels, const void*);
 } ColorFormatInfo;
 
 static const ColorFormatInfo kelvin_color_format_map[66] = {
@@ -1920,9 +1932,16 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
             assert(texture->offset < dma_len);
             texture_data += texture->offset;
 
+            /* convert texture formats the host can't handle natively */
+            uint8_t* converted_texture_data = NULL;
             if (f.converter != NULL) {
                 /* FIXME: Unswizzle before? */
-                texture_data = f.converter(width,height,texture->pitch,texture_data);
+                /* FIXME: Handle multiple levels etc. */
+                converted_texture_data = f.converter(width,height,
+                                                   texture->pitch,
+                                                   f.linear?1:texture->levels,
+                                                   texture_data);
+                texture_data = converted_texture_data;
                 assert(texture_data != NULL);
             }
 
@@ -1997,8 +2016,8 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
             }
 
             /* Free the buffer if this texture had to be converted */
-            if (f.converter != NULL) {
-                g_free(texture_data);
+            if (converted_texture_data != NULL) {
+                g_free(converted_texture_data);
             }
 
             texture->dirty = false;
