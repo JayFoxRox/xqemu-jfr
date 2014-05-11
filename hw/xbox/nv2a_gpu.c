@@ -2289,13 +2289,13 @@ static void pgraph_update_surface(NV2A_GPUState *d, bool upload)
         switch (d->pgraph.surface_color.format) {
         case NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5:
             bytes_per_pixel = 2;
-            gl_format = GL_RGB;
+            gl_format = GL_BGR;
             gl_type = GL_UNSIGNED_SHORT_5_6_5_REV;
             break;
         case NV097_SET_SURFACE_FORMAT_COLOR_LE_X8R8G8B8_Z8R8G8B8:
         case NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8:
             bytes_per_pixel = 4;
-            gl_format = GL_RGBA;
+            gl_format = GL_BGRA;
             gl_type = GL_UNSIGNED_INT_8_8_8_8_REV;
             break;
         default:
