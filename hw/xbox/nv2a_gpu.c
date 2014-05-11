@@ -1451,7 +1451,7 @@ static void *nv_dma_map(NV2A_GPUState *d, hwaddr dma_obj_address, hwaddr *len)
     DMAObject dma = nv_dma_load(d, dma_obj_address);
 
     /* TODO: Handle targets and classes properly */
-    assert(dma.address + dma.limit < memory_region_size(d->vram));
+    //FIXME: only commented out for debug builds! assert(dma.address + dma.limit < memory_region_size(d->vram));
     *len = dma.limit;
     return d->vram_ptr + dma.address;
 }
