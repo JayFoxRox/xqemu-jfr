@@ -22,7 +22,7 @@
 #include "hw/usb.h"
 #include "hw/usb/desc.h"
 
-//#define DEBUG_XID
+#define DEBUG_XID
 #ifdef DEBUG_XID
 #define DPRINTF printf
 #else
@@ -219,6 +219,7 @@ static void usb_xid_handle_control(USBDevice *dev, USBPacket *p,
 
     int ret = usb_desc_handle_control(dev, p, request, value, index, length, data);
     if (ret >= 0) {
+        DPRINTF("xid handled by usb_desc_handle_control: %i\n",ret);
         return;
     }
 
