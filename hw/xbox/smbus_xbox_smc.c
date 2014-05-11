@@ -180,7 +180,7 @@ static uint8_t smc_get_traystate(SMBusSMCDevice* smc_dev)
       printf("DVD: Tray opened\n");
     return SMC_REG_TRAYSTATE_OPENED;
   } else {
-    if (bdrv_dev_has_removable_media(bs)) {
+    if (bdrv_is_inserted(bs)) {
       printf("DVD: Media\n");
       return SMC_REG_TRAYSTATE_MEDIA;
     } else {
