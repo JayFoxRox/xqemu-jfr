@@ -22,7 +22,7 @@
 #include "hw/usb.h"
 #include "hw/usb/desc.h"
 
-#define DEBUG_XID
+//#define DEBUG_XID
 #ifdef DEBUG_XID
 #define DPRINTF printf
 #else
@@ -222,18 +222,18 @@ static void usb_xid_handle_control(USBDevice *dev, USBPacket *p,
 {
     USBXIDState *s = DO_UPCAST(USBXIDState, dev, dev);
 
-    DPRINTF("xid handle_control %x %x\n", request, value);
+    DPRINTF("xid handle_control 0x%x 0x%x\n", request, value);
 
     int ret = usb_desc_handle_control(dev, p, request, value, index, length, data);
     if (ret >= 0) {
-        DPRINTF("xid handled by usb_desc_handle_control: %i\n",ret);
+        DPRINTF("xid handled by usb_desc_handle_control: %d\n",ret);
         return;
     }
 
     switch (request) {
     /* HID requests */
     case ClassInterfaceRequest | HID_GET_REPORT:
-        DPRINTF("xid GET_REPORT %x\n", value);
+        DPRINTF("xid GET_REPORT 0x%x\n", value);
         if (value == 0x100) { /* input */
             assert(s->in_state.bLength <= length);
             memcpy(data, &s->in_state, s->in_state.bLength);
@@ -243,7 +243,7 @@ static void usb_xid_handle_control(USBDevice *dev, USBPacket *p,
         }
         break;
     case ClassInterfaceOutRequest | HID_SET_REPORT:
-        DPRINTF("xid SET_REPORT %x\n", value);
+        DPRINTF("xid SET_REPORT 0x%x\n", value);
         if (value == 0x200) { /* output */
             /* Read length, then the entire packet */
             assert(length > 2);
@@ -260,7 +260,7 @@ static void usb_xid_handle_control(USBDevice *dev, USBPacket *p,
         break;
     /* XID requests */
     case InterfaceRequestVendor | USB_REQ_GET_DESCRIPTOR:
-        DPRINTF("xid GET_DESCRIPTOR %x\n", value);
+        DPRINTF("xid GET_DESCRIPTOR 0x%x\n", value);
         if (value == 0x4200) {
             assert(s->xid_desc->bLength <= length);
             memcpy(data, s->xid_desc, s->xid_desc->bLength);
@@ -270,10 +270,11 @@ static void usb_xid_handle_control(USBDevice *dev, USBPacket *p,
         }
         break;
     case InterfaceRequestVendor | XID_GET_CAPABILITIES:
-        DPRINTF("xid XID_GET_CAPABILITIES %x\n", value);
+        DPRINTF("xid XID_GET_CAPABILITIES 0x%x\n", value);
         //assert(false);
         break;
     default:
+        DPRINTF("xid USB stalled on request 0x%x value 0x%x\n", request, value);
         p->status = USB_RET_STALL;
         assert(false);
         break;
