@@ -401,7 +401,7 @@ static void smc_led_timer_cb(SMBusSMCDevice* smc_dev) {
   bool led_green = ((sequence >> 4) >> smc_dev->led_step) & 0x1;
   bool led_red = ((sequence >> 0) >> smc_dev->led_step) & 0x1;
 
-  unsigned int led_color = (led_green?1:0) | (led_red?2:0); //FIXME: Use an enum as type later?
+  unsigned int led_color = (led_green?2:0) | (led_red?1:0); //FIXME: Use an enum as type later?
 #if 1
   print_led_color_change(smc_dev,led_color);
 #endif
