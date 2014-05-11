@@ -1471,7 +1471,7 @@ static void *nv_dma_map(NV2A_GPUState *d, hwaddr dma_obj_address, hwaddr *len)
     DMAObject dma = nv_dma_load(d, dma_obj_address);
 
     /* TODO: Handle targets and classes properly */
-    assert(dma.address + dma.limit < memory_region_size(d->vram));
+    //FIXME: only commented out for debug builds! assert(dma.address + dma.limit < memory_region_size(d->vram));
     *len = dma.limit;
     return d->vram_ptr + dma.address;
 }
@@ -1831,7 +1831,22 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
                     < sizeof(kelvin_color_format_map)/sizeof(ColorFormatInfo));
 
             ColorFormatInfo f = kelvin_color_format_map[texture->color_format];
-            assert(f.bytes_per_pixel != 0);
+            if (f.bytes_per_pixel == 0) {
+
+                char buffer[128];
+                sprintf(buffer,"NV2A: unhandled texture->color_format 0x%0x",
+                        texture->color_format);
+                glDebugMessageInsert(GL_DEBUG_SOURCE_APPLICATION,
+                                     GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR, 
+                                     0, GL_DEBUG_SEVERITY_MEDIUM, -1, 
+                                     buffer);
+
+                printf("%s\n",buffer);
+#if 0
+                assert(0);
+#endif
+                continue;
+            }
 
             GLenum gl_target;
             GLuint gl_texture;
@@ -2320,13 +2335,13 @@ static void pgraph_update_surface(NV2A_GPUState *d, bool upload)
         switch (d->pgraph.surface_color.format) {
         case NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5:
             bytes_per_pixel = 2;
-            gl_format = GL_RGB;
+            gl_format = GL_BGR;
             gl_type = GL_UNSIGNED_SHORT_5_6_5_REV;
             break;
         case NV097_SET_SURFACE_FORMAT_COLOR_LE_X8R8G8B8_Z8R8G8B8:
         case NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8:
             bytes_per_pixel = 4;
-            gl_format = GL_RGBA;
+            gl_format = GL_BGRA;
             gl_type = GL_UNSIGNED_INT_8_8_8_8_REV;
             break;
         default:

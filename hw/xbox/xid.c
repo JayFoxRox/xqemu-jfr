@@ -22,7 +22,7 @@
 #include "hw/usb.h"
 #include "hw/usb/desc.h"
 
-//#define DEBUG_XID
+#define DEBUG_XID
 #ifdef DEBUG_XID
 #define DPRINTF printf
 #else
@@ -42,8 +42,6 @@
 #define HID_GET_REPORT       0x01
 #define HID_SET_REPORT       0x09
 #define XID_GET_CAPABILITIES 0x01
-
-
 
 typedef struct XIDDesc {
     uint8_t bLength;
@@ -67,6 +65,14 @@ typedef struct XIDGamepadReport {
     int16_t sThumbRY;
 } QEMU_PACKED XIDGamepadReport;
 
+typedef struct XIDGamepadOutputReport {
+    uint8_t report_id; //FIXME: is this correct?
+    uint8_t length;
+    uint8_t pad1;
+    uint8_t	left_actuator_strength;
+    uint8_t pad2;
+    uint8_t right_actuator_strength;
+} QEMU_PACKED XIDGamepadOutputReport;
 
 
 typedef struct USBXIDState {
@@ -77,6 +83,7 @@ typedef struct USBXIDState {
 
     QEMUPutKbdEntry *kbd_entry;
     XIDGamepadReport in_state;
+    XIDGamepadOutputReport out_state;
 } USBXIDState;
 
 static const USBDescIface desc_iface_xbox_gamepad = {
@@ -219,6 +226,7 @@ static void usb_xid_handle_control(USBDevice *dev, USBPacket *p,
 
     int ret = usb_desc_handle_control(dev, p, request, value, index, length, data);
     if (ret >= 0) {
+        DPRINTF("xid handled by usb_desc_handle_control: %i\n",ret);
         return;
     }
 
@@ -236,7 +244,19 @@ static void usb_xid_handle_control(USBDevice *dev, USBPacket *p,
         break;
     case ClassInterfaceOutRequest | HID_SET_REPORT:
         DPRINTF("xid SET_REPORT %x\n", value);
-        assert(false);
+        if (value == 0x200) { /* output */
+            /* Read length, then the entire packet */
+            assert(length > 2);
+            memcpy(&s->out_state, data, 2);
+            assert(s->out_state.length == sizeof(s->out_state));
+            assert(s->out_state.length <= length);
+            memcpy(&s->out_state, data, s->out_state.length);
+            assert(s->out_state.pad1 == 0x00);
+            assert(s->out_state.pad2 == 0x00);
+            p->actual_length = s->out_state.length;
+        } else {
+            assert(false);
+        }
         break;
     /* XID requests */
     case InterfaceRequestVendor | USB_REQ_GET_DESCRIPTOR:
@@ -251,7 +271,7 @@ static void usb_xid_handle_control(USBDevice *dev, USBPacket *p,
         break;
     case InterfaceRequestVendor | XID_GET_CAPABILITIES:
         DPRINTF("xid XID_GET_CAPABILITIES %x\n", value);
-        assert(false);
+        //assert(false);
         break;
     default:
         p->status = USB_RET_STALL;
