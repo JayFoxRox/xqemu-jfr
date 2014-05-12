@@ -260,8 +260,10 @@ static void mcpx_rom_emulate(XBOX_MCPXState* s)
   if (!s->rom.enabled) {
     return;
   }
+
   // Setup MTRR with register from xcode
   mcpx_rom_setup_mtrr(s); 
+
   // Now see if we HLE the 2BL too
   const uint8_t* key_2bl = NULL; //jayfoxrox_key_2bl; //FIXME read key from command line
   
