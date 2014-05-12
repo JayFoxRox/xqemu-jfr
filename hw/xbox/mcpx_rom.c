@@ -18,10 +18,21 @@
  * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
+/*
+    Notes:
+
+    - For the COMPLEX bios we need proper emulation though..
+      However, there are only 2 known exploits, so it should be enough to
+      set EIP in OUTB and POKEPCI
+    - Passes execution to flash rom or bootloader.c
+*/
+
 //FIXME: Formating and probably other code QEMU conventions violated!
 //FIXME: Add more checks for mcpx_rom_enabled in emulation
 //FIXME: replace phsical memory access etc by cpu_ldl_kernel etc
 //FIXME: Add option to enable/disable debug printf
+
+//FIXME: Replace "2bl" by "bootloader"
 
 //FIXME: tons of useless include here
 #include "hw/hw.h"
@@ -35,6 +46,7 @@
 
 #include "hw/xbox/mcpx.h"
 
+#include "hw/xbox/bootloader.h"
 #include "hw/xbox/rc4.h" // UGLY.. do this differently?
 
 #include "keys.fox" //FIXME: Remove once everything has a cli
@@ -47,79 +59,6 @@ static const hwaddr bootrom_dt_offset = +0x1D8;
 static const hwaddr bootrom_dt_pointer_offset = +0x1F4;
 static unsigned int bootrom_size = 0x200; //FIXME: Better type
 
-#if 1 //FIXME WIP: MCPX HLE
-#if 0 //FIXME WIP: 2BL HLE
-#if 0 //FIXME WIP: Kernel Loader
-static void prepare_kernel_registers(XBOX_MCPXState* s)
-{
-  
-/*
-  uint32_t kernelAddress = 0x80010000;
-
-    Arguments can be anywhere because they will be copied from kernel..
-    just make sure we are not coliding with kernel and data
-
-    keys (EEPROM+CERT) = from keys.bin
-    bldrargs = qemu option, 64 byte char array (zero terminated?)
-
-  OptionalHeader.AddressOfEntryPoint(bldrargs,keys)
-*/
-
-}
-#else
-static void prepare_kernel_registers(XBOX_MCPXState* s) { warningPrintf("Kernel loading not supported but used\n"); }
-#endif
-
-
-static void emulate_2bl(XBOX_MCPXState* s)
-{
-/*
-
-FIXME!
-
-    //Disable MCPX rom
-    2bl_disable_mcpx_rom();
-    //Stop SMC timeout
-    2bl_stop_smc_timeout();
-    //Setup RAM slew [where do we get the table from?]
-    2bl_setup_ram_slew
-    //Setup LDT bus
-    2bl_setup_ldt_bus();
-    //Setup USB
-    2bl_setup_usb();
-
-    kernel_file = option "kernel" //FIXME Read from cli
-    const char* key_kernel = ; // FIXME Read from cli
-    if (key_kernel) {
-        if (kernel_file) {
-          warningPrintf("2BL emulation RC4 key set, ignoring kernel image");
-        }
-        //Decrypt kernel from flash
-        //Extract kernel
-        
-    } else {
-      if(!kernel_file) {
-        errorPrintf("2BL emulation requires kernel or RC4 key");
-        exit(1);
-      }
-
-      // Load kernel from file
-      {
-        open(kernel);
-
-        // Load kernel to 0x80010000
-      }  
-
-      // Data section of kernel should be loaded from flash (0-0x200-0x6000) to wherever the datapointer points.. then again to kernel
-
-    }
-*/
-    // Start emulation of the kernel
-    prepare_kernel_registers(s);
-}
-#else
-static void emulate_2bl(struct XBOX_MCPXState* s) { warningPrintf("2BL emulation not supported but used\n"); }
-#endif
 
 static void mcpx_rom_switch_to_protected_mode(struct XBOX_MCPXState* s)
 {
@@ -220,6 +159,7 @@ static void mcpx_rom_run_xcode(struct XBOX_MCPXState* s)
         //FIXME: Add broken security check to block "disable the MCPX ROM"
         helper_outl(0xCF8,op1);  
         helper_outl(0xCFC,op2);  
+        env->eip = 0xfffffe62;
         break;
       case 0x05: // PEEKPCI      
         printf("ACC := PCICONF[%s]\n",op1_string);
@@ -241,6 +181,7 @@ static void mcpx_rom_run_xcode(struct XBOX_MCPXState* s)
       case 0x11: // OUTB
         printf("PORT[%s & 0xFFFF] := %s\n",op1_string,op2_string);
         helper_outb(op1,op2);
+        env->eip = 0xfffffea0;
         break;
       case 0x12: // INB
         printf("ACC := PORT[%s & 0xFFFF]\n",op1_string);
@@ -263,11 +204,8 @@ static void mcpx_rom_run_xcode(struct XBOX_MCPXState* s)
 
   }
 
-  env->eip = 0xfffffea0; //We are around this location.. //FIXME: Use more accurate address for this too
-
-//FIXME: For the COMPLEX bios we need proper emulation though..
-//       However, there are only 2 known exploits, so it should be enough to
-//       set EIP in OUTB and POKEPCI
+  /* Update eip even though it shouldn't matter much anymore */
+  env->eip = 0xfffffebc;
 
   env->regs[R_ESI] = pc;
   env->regs[R_EBX] = op1;
@@ -304,7 +242,7 @@ static void mcpx_rom_setup_mtrr(struct XBOX_MCPXState* s)
 
 }
 
-static void emulate_mcpx_rom(XBOX_MCPXState* s)
+static void mcpx_rom_emulate(XBOX_MCPXState* s)
 {
 
   printf("MCPX HLE!\n");
@@ -325,7 +263,7 @@ static void emulate_mcpx_rom(XBOX_MCPXState* s)
   // Setup MTRR with register from xcode
   mcpx_rom_setup_mtrr(s); 
   // Now see if we HLE the 2BL too
-  const uint8_t* key_2bl = jayfoxrox_key_2bl; //FIXME read key from command line
+  const uint8_t* key_2bl = NULL; //jayfoxrox_key_2bl; //FIXME read key from command line
   
   if (key_2bl) {
     s->rom.hle_2bl_code = false;
@@ -362,12 +300,10 @@ static void emulate_mcpx_rom(XBOX_MCPXState* s)
   } else {
     // Go to 2bl HLE
     s->rom.hle_2bl_code = true;
-    emulate_2bl(s);
+    /* FIXME: pass revision information etc */
+    bootloader_emulate();
   }
 }
-#else
-static void emulate_mcpx_rom(XBOX_MCPXState* s) {}
-#endif
 
 static int load_mcpx_rom(XBOX_MCPXState* s, const char* bootrom_file) {
   char *filename;
@@ -478,7 +414,7 @@ static void mcpx_rom_reset_late(struct XBOX_MCPXState* s)
   if (s->rom.hle_mcpx_rom_code) {
     // Emulate the MCPX startup
     //FIXME: Make sure we are at 0xFFFF:FFF0
-    emulate_mcpx_rom(s);
+    mcpx_rom_emulate(s);
   } else {
     printf("Real bios should take over now!\n");
   }
