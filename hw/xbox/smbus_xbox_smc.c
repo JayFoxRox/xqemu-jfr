@@ -173,7 +173,10 @@ static uint8_t smc_get_traystate(SMBusSMCDevice* smc_dev)
 
   //FIXME: Work on activity flag! - WWXD?
 
-  if (!smc_dev->dvdrom) { printf("DVD: No drive / Reset\n"); return SMC_REG_TRAYSTATE_RESET; }
+  if (!smc_dev->dvdrom) {
+    printf("DVD: No drive / Reset\n");
+    return SMC_REG_TRAYSTATE_RESET;
+  }
   BlockDriverState *bs = smc_dev->dvdrom->bdrv;
 
   if (bdrv_dev_is_tray_open(bs)) {
@@ -239,12 +242,17 @@ static void smc_start_watchdog(SMBusSMCDevice* smc_dev) {
     smc_dev->watchdog_challenge[3] = 0x00;
     return;
   }
-
-  //FIXME: Actual random challenge..
+#if 1 //FIXME: Remove the upper part, only for testing
   smc_dev->watchdog_challenge[0] = 0x52;
   smc_dev->watchdog_challenge[1] = 0x72;
   smc_dev->watchdog_challenge[2] = 0xea;
   smc_dev->watchdog_challenge[3] = 0x46;
+#else
+  smc_dev->watchdog_challenge[0] = rand() & 0xff;
+  smc_dev->watchdog_challenge[1] = rand() & 0xff;
+  smc_dev->watchdog_challenge[2] = rand() & 0xff;
+  smc_dev->watchdog_challenge[3] = rand() & 0xff;
+#endif
 
   // Now start the watchdog!
   //FIXME: Check if the watchdog is already active or something?
@@ -254,6 +262,23 @@ static void smc_start_watchdog(SMBusSMCDevice* smc_dev) {
 
 void smc_stop_watchdog(SMBusSMCDevice* smc_dev)
 {
+
+/*
+FIXME!
+  uint8_t t1 = (challenge[0] << 2) ^ (challenge[1] + 0x39) ^
+               (challenge[2] >> 2) ^ (challenge[3] + 0x63);    
+  uint8_t t2 = (challenge[0] + 0x0b) ^ (challenge[1] >> 2) ^
+               (challenge[2] + 0x1b);
+
+  response[0] = 0x33;
+  response[1] = 0xed;
+
+  for(i = 0; i < 4; i++) {
+      response[0] += response[1] ^ t1;
+      response[1] += response[0] ^ t2;
+  }
+*/
+
   //FIXME: Check if challenge was correct
   {
     // Disable watchdog
