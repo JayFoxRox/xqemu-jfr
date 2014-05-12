@@ -278,17 +278,19 @@ static void mcpx_rom_emulate(XBOX_MCPXState* s)
     cpu_physical_memory_write(0x00090000, buffer, length);
     g_free(buffer);
 
-    // Check if it's valid
-    if (s->revision >= 0xC3) {
-      // TEA
-      //FIXME: Can only be done if we know the actual hash - is that legal?
-    } else {
-      // 32 bit check          
-      uint32_t magic;
-      cpu_physical_memory_read(0x00095fe4, &magic, 4);
-      assert(magic == jayfoxrox_2bl_hash); //FIXME: Is sharing this value legal?
-      debugPrintf("Check passed. Magic: 0x%08X?!\n",magic);
-    }      
+    /* Check if it's valid */
+    if (s->xmode == 3) {
+      if (s->revision >= 0xC3) {
+        // TEA
+        //FIXME: Can only be done if we know the actual hash - is that legal?
+      } else {
+        // 32 bit check
+        uint32_t magic;
+        cpu_physical_memory_read(0x00095fe4, &magic, 4);
+        assert(magic == jayfoxrox_2bl_hash); //FIXME: Is sharing this value legal?
+        debugPrintf("Check passed. Magic: 0x%08X?!\n",magic);
+      }
+    }
 
     // Now jump to 2bl
     uint32_t entryPoint; // FIXME: Better type?
@@ -298,10 +300,10 @@ static void mcpx_rom_emulate(XBOX_MCPXState* s)
     env->regs[R_EDI] = length; // 2bl size
     env->eip = env->regs[R_EAX] = entryPoint;
   } else {
-    // Go to 2bl HLE
+    /* Go to 2bl HLE */
     s->rom.hle_2bl_code = true;
-    /* FIXME: pass revision information etc */
-    bootloader_emulate();
+    /* We have to tell the bootloader what it was compiled for */
+    bootloader_emulate(true, s->xmode == 3, s->revision >= 0xC3, false);
   }
 }
 

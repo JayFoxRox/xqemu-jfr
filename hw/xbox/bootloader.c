@@ -274,13 +274,13 @@ static void bootloader_preloader(void)
   env->regs[R_EBP] = decrypt_buffer;
 }
 
-void bootloader_emulate(void)
+void bootloader_emulate(bool preloader, bool x3, bool patched, bool debug)
 {
 
     X86CPU *cpu = X86_CPU(first_cpu);
     CPUX86State *env = &cpu->env;
 
-    if (1) { //FIXME: preloader if wanted..
+    if (preloader) {
       bootloader_preloader();
     }
 
@@ -298,8 +298,7 @@ void bootloader_emulate(void)
 
     // Relocate bootloader from ebp or bootloader_original_address
     uint32_t bootloader_old_address;
-    if (1) { /*FIXME: I was told this happens, but on what systems?
-                      Must be hardcoded! */
+    if (debug) {
         bootloader_old_address = env->regs[R_EBP];
     } else {
         bootloader_old_address = bootloader_original_address;
@@ -316,7 +315,7 @@ void bootloader_emulate(void)
     /* FIXME: More Low level stuff: paging etc */
 
 
-    { /*FIXME: Only done on X3! - not checked at runtime! */
+    if (x3) {
         /* Disable MCPX rom */
         bootloader_disable_mcpx_rom();
         /* Stop SMC timeout */
@@ -337,7 +336,7 @@ void bootloader_emulate(void)
     }
 
     bool setup = true;
-    if (0) { /* FIXME: Only done if *NOT* X3 - not checked at runtime! */
+    if (debug) { //FIXME: Check if this is only on X2?!
         if (0) { /* FIXME: Only done if "SHADOW" was passed! */
             setup = false;
         }

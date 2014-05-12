@@ -20,6 +20,6 @@
 #ifndef HW_XBOX_BOOTLOADER_H
 #define HW_XBOX_BOOTLOADER_H
 
-void bootloader_emulate(void);
+void bootloader_emulate(bool preloader, bool x3, bool patched, bool debug);
 
 #endif
