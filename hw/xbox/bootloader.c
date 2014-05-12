@@ -45,22 +45,21 @@
 #define errorPrintf(x,...) fprintf(stderr,x, ## __VA_ARGS__);
 #define debugPrintf(x,...) fprintf(stdout,x, ## __VA_ARGS__);
 
-/*FIXME: hwaddr type! */
-const uint32_t bootloader_size = 0x6000;
-const uint32_t bootloader_original_address = 0x80090000;
-const uint32_t bootloader_address = 0x80400000;
-const uint32_t bootloader_physical_address = 0x80400000;
-const uint32_t kernel_address = 0x80010000;
-const uint32_t preloader_stack = 0x0008F000;
+static const hwaddr bootloader_size = 0x6000;
+static const hwaddr bootloader_original_address = 0x80090000;
+static const hwaddr bootloader_address = 0x80400000;
+static const hwaddr bootloader_physical_address = 0x400000;
+static const hwaddr kernel_address = 0x80010000;
+static const hwaddr preloader_stack = 0x0008F000;
 /*
     The arguments are hardcoded in the ROM image.. yep.
 */
-const uint32_t kernel_arguments_address = bootloader_address;
+static const hwaddr kernel_arguments_address = bootloader_address;
 /*
     The kernel keys are normally part of the 2BL image, however, we don't have
     that when using HLE, so we put it where code would normally end up
 */
-const uint32_t kernel_keys_address = bootloader_address+64;
+static const hwaddr kernel_keys_address = bootloader_address+64;
 
 static void bootloader_prepare_kernel_registers(void)
 {
@@ -102,9 +101,8 @@ static void bootloader_prepare_kernel_registers(void)
         checks for more
     */
 
-    /*FIXME: hwaddr type */
-    uint32_t kernel_nt_header = kernel_address;
-    uint32_t entry_point = jayfoxrox_kernel_entry_point;
+    hwaddr kernel_nt_header = kernel_address;
+    hwaddr entry_point = jayfoxrox_kernel_entry_point;
 
     /* Put pointers on stack and jump to entry point */
     {    
@@ -253,25 +251,160 @@ static void bootloader_mcpx_reset(void)
 
 static void bootloader_preloader(void)
 {
-  /* This decrypts the actual bootloader and SHA1's it */
+    X86CPU *cpu = X86_CPU(first_cpu);
+    CPUX86State *env = &cpu->env;
 
-  X86CPU *cpu = X86_CPU(first_cpu);
-  CPUX86State *env = &cpu->env;
-  
-  /* Setup segments for preloader */
-  helper_load_seg(env, R_DS, 0x10);
-  helper_load_seg(env, R_ES, 0x10);
-  helper_load_seg(env, R_SS, 0x10);
-  env->regs[R_ESP] = preloader_stack;
-  helper_load_seg(env, R_FS, 0x00);
-  helper_load_seg(env, R_GS, 0x00);
+    /* Setup segments for preloader */
+    helper_load_seg(env, R_DS, 0x10);
+    helper_load_seg(env, R_ES, 0x10);
+    helper_load_seg(env, R_SS, 0x10);
+    env->regs[R_ESP] = preloader_stack;
+    helper_load_seg(env, R_FS, 0x00);
+    helper_load_seg(env, R_GS, 0x00);
 
-  //FIXME: Segment setup SHA1 etc..
+    //FIXME: Segment setup SHA1 etc..
 
-  /* Pass the address of the decrypted bootloader */
-  uint32_t decrypt_buffer = bootloader_physical_address - bootloader_size;
-  //FIXME: Decrypt from ROM if the key is present!
-  env->regs[R_EBP] = decrypt_buffer;
+    /* Pass the address of the decrypted bootloader */
+    uint32_t decrypt_buffer = bootloader_physical_address - bootloader_size;
+    //FIXME: Decrypt from ROM if the key is present!
+    env->regs[R_EBP] = decrypt_buffer;
+}
+
+static void bootloader_setup_mtrr(void)
+{
+
+    X86CPU *cpu = X86_CPU(first_cpu);
+    CPUX86State *env = &cpu->env;
+
+    /* Disable cache and write-through, then flush TLB */
+    cpu_x86_update_cr0(env, env->cr[0] | (1 << 30) | (1 << 29));
+    /* FIXME: wbinvd */
+    cpu_x86_update_cr3(env, env->cr[3]);
+
+    /* Disable MTRR */
+    env->regs[R_ECX] = MSR_MTRRdefType;
+    env->regs[R_EAX] = 0x00000000;
+    env->regs[R_EDX] = 0x00000000;
+    helper_wrmsr(env);
+
+    /* FIXME: Some MTRR MSR.. check spec */
+    env->regs[R_ECX] = 0x200; //FIXME: use MSR_*
+    env->regs[R_EAX] = 0x00000006;
+    env->regs[R_EDX] = 0x00000000;
+    helper_wrmsr(env);
+    env->regs[R_ECX] = 0x201; //FIXME: use MSR_*
+    bool xbox_bootloader_128mb = true; // FIXME: get cli "xbox_bootloader_128mb"
+    env->regs[R_EAX] = xbox_bootloader_128mb?0xf8000800:0xfc000800;
+    env->regs[R_EDX] = 0x0000000F;
+    helper_wrmsr(env);
+
+    /* Write protect upper memory region */
+    env->regs[R_ECX] = 0x202; //FIXME: use MSR_*
+    env->regs[R_EAX] = 0xfff80005;
+    env->regs[R_EDX] = 0x00000000;
+    helper_wrmsr(env);
+    env->regs[R_ECX] = 0x203; //FIXME: use MSR_*
+    env->regs[R_EAX] = 0xfff80800;
+    env->regs[R_EDX] = 0x0000000f;
+    helper_wrmsr(env);
+
+    /* Reset unused MTRR */
+    env->regs[R_EAX] = 0x00000000;
+    env->regs[R_EDX] = 0x00000000;
+    unsigned int i;
+    for(i = 2; i < 8; i++) {
+        env->regs[R_ECX] = MSR_MTRRphysBase(i);
+        helper_wrmsr(env);
+        env->regs[R_ECX] = MSR_MTRRphysMask(i);
+        helper_wrmsr(env);
+    }
+
+    /* Enable MTRR and uncached default type */
+    env->regs[R_ECX] = MSR_MTRRdefType;
+    env->regs[R_EAX] = 0x00000800;
+    env->regs[R_EDX] = 0x00000000;
+    helper_wrmsr(env);
+
+    /* Enable cache and write-through */
+    cpu_x86_update_cr0(env, env->cr[0] & ~((1 << 30) | (1 << 29)));
+}
+
+static void bootloader_setup_paging(void)
+{
+
+    X86CPU *cpu = X86_CPU(first_cpu);
+    CPUX86State *env = &cpu->env;
+
+    uint32_t pde;
+    const hwaddr page_directory_base = 0x0000f000;
+    /* Valid, writable, accessed, dirty */
+    const uint32_t pte_bits_vwad = 0x063;
+    /* Valid, writable, accessed, large, dirty */
+    const uint32_t pte_bits_vwadl = 0x0e3;
+    /* Valid, writable, accessed, large, dirty, uncached */
+    const uint32_t pte_bits_vwtnadl = 0x0fb;
+
+    /* Map 256MB at 0x00000000 and 0x80000000 to physical memory 0x00000000 */
+    {
+        hwaddr ptr = page_directory_base;
+        pde = pte_bits_vwadl; // PFN = 0
+        unsigned int i;
+        for(i = 0; i < 64; i++) {
+            cpu_physical_memory_write(ptr+0x800,&pde,4);
+            cpu_physical_memory_write(ptr+0x000,&pde,4);
+            ptr += 4;
+            /* Skip to next PFN */
+            pde += 0x400000;
+        }
+        for(i = 0; i < 448; i++) {
+            uint32_t zero = 0x00000000;
+            cpu_physical_memory_write(ptr+0x800,&zero,4);
+            cpu_physical_memory_write(ptr+0x000,&zero,4);
+            ptr += 4;
+        }
+    }
+
+    /* Map 4kB page directory table to 0xC0000000 */ /*FIXME: Did I interpret this correctly? */
+    pde = page_directory_base | pte_bits_vwad;
+    cpu_physical_memory_write(page_directory_base + 0xc00, &pde, 4);
+
+    /* Map 4MB at 0xFFC00000 to ROM */
+    pde = 0xffc00000 | pte_bits_vwadl;
+    cpu_physical_memory_write(page_directory_base + 0xffc, &pde, 4);
+
+    /* Map 16MB at 0xFD000000 to GPU registers */
+    pde = 0xfd000000 | pte_bits_vwtnadl;
+    cpu_physical_memory_write(page_directory_base + 0xfd0, &pde, 4);
+    pde += 0x400000;
+    cpu_physical_memory_write(page_directory_base + 0xfd4, &pde, 4);
+    pde += 0x400000;
+    cpu_physical_memory_write(page_directory_base + 0xfd8, &pde, 4);
+    pde += 0x400000;
+    cpu_physical_memory_write(page_directory_base + 0xfdc, &pde, 4);
+
+    /* Backup CR0, then enable(?!) write-through, disable caching */
+    uint32_t cr0_backup = env->cr[0];
+    cpu_x86_update_cr0(env, (env->cr[0] & ~(1 << 29)) | (1 << 30));
+    /* FIXME: wbinvd */
+
+    /* FIXME: Unknown MSR, check spec and edit comment */
+    env->regs[R_ECX] = 0x277; //FIXME: MSR_*
+    env->regs[R_EAX] = env->regs[R_EDX] = 0x00070106;
+    helper_wrmsr(env);
+
+    /* Restore CR0 */
+    /* FIXME: wbinvd */
+    cpu_x86_update_cr0(env, cr0_backup);
+
+    /* Enable Page Size Extension, FXSR and XMMEXCPT */
+    cpu_x86_update_cr4(env, env->cr[4] | (1 << 4) | (1 << 9) | (1 << 10));
+
+    /* Set page directory address */
+    cpu_x86_update_cr3(env, page_directory_base);
+
+    /* Enable paging, write protect and numeric errors */
+    cpu_x86_update_cr0(env, env->cr[0] | (1 << 31) | (1 << 16) | (1 << 5));
+
 }
 
 void bootloader_emulate(bool preloader, bool x3, bool patched, bool debug)
@@ -280,19 +413,19 @@ void bootloader_emulate(bool preloader, bool x3, bool patched, bool debug)
     X86CPU *cpu = X86_CPU(first_cpu);
     CPUX86State *env = &cpu->env;
 
+    /* Run the preloader if caller wants it */
     if (preloader) {
       bootloader_preloader();
     }
 
-    //FIXME: disable cache
-    //FIXME: setup mtrr
-    //FIXME: enable cache
+    /* Setup MTRR */
+    bootloader_setup_mtrr();
 
     /* Set up segments for bootloader */
     helper_load_seg(env, R_DS, 0x10);
     helper_load_seg(env, R_ES, 0x10);
     helper_load_seg(env, R_SS, 0x10);
-    env->regs[R_ESP] = bootloader_address; //FIXME: MS oddity?! Check IDA again
+    env->regs[R_ESP] = bootloader_physical_address;
     helper_load_seg(env, R_FS, 0x00);
     helper_load_seg(env, R_GS, 0x00);
 
@@ -304,7 +437,7 @@ void bootloader_emulate(bool preloader, bool x3, bool patched, bool debug)
         bootloader_old_address = bootloader_original_address;
     }
     printf("Relocating bootloader from 0x%08x to 0x%08x\n",
-           bootloader_old_address,bootloader_address);
+           bootloader_old_address, (uint32_t)bootloader_address);
     unsigned int i;
     for(i = 0; i < bootloader_size/4; i++) {
         uint32_t value;
@@ -312,9 +445,13 @@ void bootloader_emulate(bool preloader, bool x3, bool patched, bool debug)
         cpu_physical_memory_write(bootloader_address+i*4, &value, 4);
     }
 
-    /* FIXME: More Low level stuff: paging etc */
+    /* Setup paging and the page table */
+    bootloader_setup_paging();
 
+    /* Relocate the stack now */
+    env->regs[R_ESP] = bootloader_address;
 
+    /* Now the high level portion of the bootloader */
     if (x3) {
         /* Disable MCPX rom */
         bootloader_disable_mcpx_rom();
@@ -362,36 +499,64 @@ void bootloader_emulate(bool preloader, bool x3, bool patched, bool debug)
         printf("FIXME: MCPX HLE, Bootloader HLE, Kernel\n");
         assert(0);
     } else {
-      if(!kernel_filename) {
-        errorPrintf("bootloader emulation requires kernel or RC4 key\n");
-        exit(1);
-      }
-
-      /* Load kernel from file */
-      {
-        int kernel_size = get_image_size(kernel_filename);
-  
-        int fd = open(kernel_filename, O_RDONLY | O_BINARY);
-        if (fd == -1) {
-            fprintf(stderr, "qemu: could not load xbox kernel '%s'\n", kernel_filename);
+        if(!kernel_filename) {
+            errorPrintf("bootloader emulation requires kernel or RC4 key\n");
             exit(1);
         }
-        assert(fd != -1);
-        uint8_t* kernel_buf = g_malloc(kernel_size);
-        ssize_t rc = read(fd, kernel_buf, kernel_size);
-        assert(rc == kernel_size);
-        close(fd);
 
-        cpu_physical_memory_write(kernel_address, kernel_buf, kernel_size);
-        g_free(kernel_buf);
+        /* Load kernel from file */
+        {
+            int kernel_size = get_image_size(kernel_filename);
 
-      }  
+            int fd = open(kernel_filename, O_RDONLY | O_BINARY);
+            if (fd == -1) {
+                fprintf(stderr, "qemu: could not load xbox kernel '%s'\n", kernel_filename);
+                exit(1);
+            }
+            assert(fd != -1);
+            uint8_t* kernel_buf = g_malloc(kernel_size);
+            ssize_t rc = read(fd, kernel_buf, kernel_size);
+            assert(rc == kernel_size);
+            close(fd);
 
-      /*
-        Data section of kernel should be loaded from flash (0-0x200-0x6000)
-        to wherever the datapointer points.. then again to kernel
-      */
-      //FIXME!
+            cpu_physical_memory_write(kernel_address, kernel_buf, kernel_size);
+            g_free(kernel_buf);
+        }
+
+        /*
+          Data section of kernel should be loaded from flash (0-0x200-0x6000)
+          to wherever the datapointer points.. then again to kernel
+        */
+        //FIXME: Find data section
+        size_t kernel_initialized_data_size = jayfoxrox_kernel_init_data_size;
+        hwaddr kernel_data_offset = 0;
+
+        /* Use the existing data memory regions or reset them */
+        if (0) {
+
+            /* Fixup data pointer */
+            //FIXME: This is what the bootloader would do
+
+        } else {
+
+            /* Instead of fixing up the .data pointer we follow it */
+            hwaddr read_ptr = 0xFFFFFFFF-0x200-0x6000-kernel_initialized_data_size+1; //FIXME: Verify!
+            read_ptr = jayfoxrox_flash_data_address; //FIXME: Remove
+            assert(read_ptr == jayfoxrox_flash_data_address);
+            hwaddr write_ptr = kernel_address+kernel_data_offset; //FIXME: Verify!
+            write_ptr = jayfoxrox_kernel_data_address; // FIXME: Remove
+            assert(write_ptr == jayfoxrox_kernel_data_address);
+
+            /* Copy initialized data to where the kernel expects it */
+            for(i = 0; i < kernel_initialized_data_size; i++) {
+                uint8_t buffer;
+                cpu_physical_memory_read(read_ptr++, &buffer, 1);
+                cpu_physical_memory_write(write_ptr++, &buffer, 1);
+            }
+
+            /* Uninitialized data won't be accessed by the kernel! */
+
+        }
 
     }
 
