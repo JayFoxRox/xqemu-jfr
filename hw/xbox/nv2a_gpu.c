@@ -467,6 +467,8 @@
 #           define NV097_SET_SURFACE_FORMAT_COLOR_LE_B8                    0x09
 #           define NV097_SET_SURFACE_FORMAT_COLOR_LE_G8B8                  0x0A
 #       define NV097_SET_SURFACE_FORMAT_ZETA                      0x000000F0
+#           define NV097_SET_SURFACE_FORMAT_ZETA_Z16                       0x01
+#           define NV097_SET_SURFACE_FORMAT_ZETA_Z24S8                     0x02
 #   define NV097_SET_SURFACE_PITCH                            0x0097020C
 #       define NV097_SET_SURFACE_PITCH_COLOR                      0x0000FFFF
 #       define NV097_SET_SURFACE_PITCH_ZETA                       0xFFFF0000
@@ -589,6 +591,14 @@
 #   define NV097_SET_TRANSFORM_PROGRAM_LOAD                   0x00971E9C
 #   define NV097_SET_TRANSFORM_PROGRAM_START                  0x00971EA0
 #   define NV097_SET_TRANSFORM_CONSTANT_LOAD                  0x00971EA4
+
+#   define NV097_SET_SHADE_MODE                               0x0097037c
+#       define NV097_SET_SHADE_MODE_FLAT                          0x00001D00
+#       define NV097_SET_SHADE_MODE_SMOOTH                        0x00001D01
+
+#   define NV097_SET_DEPTH_MASK                               0x0097035c
+#       define NV097_SET_DEPTH_MASK_FALSE                         0x00000000
+#       define NV097_SET_DEPTH_MASK_TRUE                          0x00000001
 
 #   define NV097_SET_ALPHA_TEST_ENABLE                        0x00970300
 #       define NV097_SET_ALPHA_TEST_ENABLE_FALSE                  0x00000000
@@ -966,6 +976,9 @@ typedef struct KelvinState {
     unsigned int inline_buffer_length;
     InlineVertexBufferEntry inline_buffer[NV2A_GPU_MAX_BATCH_LENGTH];
 
+    uint32_t shade_mode;
+    bool depth_mask;
+
     bool alpha_test_enable;
     bool blend_enable;
     bool cull_face_enable;
@@ -1076,6 +1089,7 @@ typedef struct PGRAPHState {
     GloContext *gl_context;
     GLuint gl_framebuffer;
     GLuint gl_renderbuffer;
+    GLuint gl_depth_renderbuffer;
     GraphicsSubchannel subchannel_data[NV2A_GPU_NUM_SUBCHANNELS];
 
 
@@ -2508,6 +2522,16 @@ static void pgraph_init(PGRAPHState *pg)
                                  GL_RENDERBUFFER_EXT,
                                  pg->gl_renderbuffer);
 
+    glGenRenderbuffersEXT(1, &pg->gl_depth_renderbuffer);
+    glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, pg->gl_depth_renderbuffer);
+    glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, GL_DEPTH_COMPONENT24,
+                             640, 480);
+    glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,
+                                 GL_DEPTH_ATTACHMENT_EXT,
+                                 GL_RENDERBUFFER_EXT,
+                                 pg->gl_depth_renderbuffer);
+
+
     assert(glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT)
             == GL_FRAMEBUFFER_COMPLETE_EXT);
 
@@ -2549,6 +2573,7 @@ static void pgraph_destroy(PGRAPHState *pg)
     glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, "NV2A: pgraph_destroy");
 
     glDeleteRenderbuffersEXT(1, &pg->gl_renderbuffer);
+    glDeleteRenderbuffersEXT(1, &pg->gl_depth_renderbuffer);
     glDeleteFramebuffersEXT(1, &pg->gl_framebuffer);
 
     for (i = 0; i < NV2A_GPU_MAX_TEXTURES; i++) {
@@ -3287,6 +3312,24 @@ static void pgraph_method(NV2A_GPUState *d,
             gl_mask |= GL_COLOR_BUFFER_BIT;
             pgraph_update_surface(d, true);
 
+            uint32_t clear_zstencil = d->pgraph.regs[NV_PGRAPH_ZSTENCILCLEARVALUE];
+            GLint gl_clear_stencil;
+            GLdouble gl_clear_depth;
+            switch(pg->surface_zeta.format) {
+                case NV097_SET_SURFACE_FORMAT_ZETA_Z16:
+                    //FIXME what happens with gl_clear_stencil?
+                    gl_clear_depth = (clear_zstencil & 0xFFFF) / (double)0xFFFF;
+                    break;
+                case NV097_SET_SURFACE_FORMAT_ZETA_Z24S8:
+                    gl_clear_stencil = clear_zstencil & 0xFF;
+                    gl_clear_depth = (clear_zstencil >> 8) / (double)0xFFFFFF;
+                    break;
+                default:
+                    assert(0);
+            }
+            glClearDepth(gl_clear_depth);
+            glClearStencil(gl_clear_stencil);
+
             uint32_t clear_color = d->pgraph.regs[NV_PGRAPH_COLORCLEARVALUE];
             glClearColor( ((clear_color >> 16) & 0xFF) / 255.0f, /* red */
                           ((clear_color >> 8) & 0xFF) / 255.0f,  /* green */
@@ -3310,7 +3353,10 @@ static void pgraph_method(NV2A_GPUState *d,
         NV2A_GPU_DPRINTF("------------------CLEAR 0x%x %d,%d - %d,%d  %x---------------\n",
             parameter, xmin, ymin, xmax, ymax, d->pgraph.regs[NV_PGRAPH_COLORCLEARVALUE]);
 
+        /* The NV2A clear is just a glorified memset, so clear masks */
+        glDepthMask(GL_TRUE);
         glClear(gl_mask);
+        glDepthMask(kelvin->depth_mask?GL_TRUE:GL_FALSE);
 
         glDisable(GL_SCISSOR_TEST);
 
@@ -3387,6 +3433,22 @@ static void pgraph_method(NV2A_GPUState *d,
         NV2A_GPU_DPRINTF("load to %d\n", parameter);
         break;
 
+    case NV097_SET_SHADE_MODE:
+        kelvin->shade_mode = parameter;
+        {
+            GLenum gl_mode;
+            switch(kelvin->shade_mode) {
+                case NV097_SET_SHADE_MODE_FLAT: gl_mode = GL_FLAT; break;
+                case NV097_SET_SHADE_MODE_SMOOTH: gl_mode = GL_SMOOTH; break;
+                default:
+                    assert(0);
+            }
+            glShadeModel(gl_mode);
+        }
+        break;
+    case NV097_SET_DEPTH_MASK:
+        glDepthMask((kelvin->depth_mask = parameter)?GL_TRUE:GL_FALSE);
+        break;
     case NV097_SET_ALPHA_TEST_ENABLE:
         set_gl_state(GL_ALPHA_TEST,kelvin->alpha_test_enable = parameter);
         break;
