@@ -18,8 +18,8 @@
  * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef MCPX_ROM_H
-#define MCPX_ROM_H
+#ifndef HW_XBOX_MCPX_ROM_H
+#define HW_XBOX_MCPX_ROM_H
 
 void mcpx_rom_hide(XBOX_MCPXState* s);
 void mcpx_rom_show(XBOX_MCPXState* s);

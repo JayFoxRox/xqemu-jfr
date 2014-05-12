@@ -18,8 +18,8 @@
  * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef NV2A_H
-#define NV2A_H
+#ifndef HW_XBOX_NV2A_H
+#define HW_XBOX_NV2A_H
 
 void nv2a_reset(void);
 

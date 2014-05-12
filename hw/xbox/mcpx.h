@@ -18,8 +18,8 @@
  * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef MCPX_H
-#define MCPX_H
+#ifndef HW_XBOX_MCPX_H
+#define HW_XBOX_MCPX_H
 
 #include "hw/hw.h"
 
