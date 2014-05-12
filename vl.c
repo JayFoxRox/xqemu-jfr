@@ -444,9 +444,25 @@ static QemuOptsList qemu_machine_opts = {
             .type = QEMU_OPT_NUMBER,
             .help = "Xbox SMC version",
         },{
+            .name = "xbox_smc_scratch",
+            .type = QEMU_OPT_NUMBER,
+            .help = "Xbox SMC scratch register value",
+        },{
             .name = "xbox_eeprom",
             .type = QEMU_OPT_STRING,
             .help = "Xbox EEPROM file",
+        },{
+            .name = "xbox_kernel",
+            .type = QEMU_OPT_STRING,
+            .help = "Xbox kernel file",
+        },{
+            .name = "xbox_kernel_arguments",
+            .type = QEMU_OPT_STRING,
+            .help = "Xbox kernel arguments",
+        },{
+            .name = "xbox_kernel_keys",
+            .type = QEMU_OPT_STRING,
+            .help = "Xbox kernel keys file",
         },{
             .name = "mediaboard_rom",
             .type = QEMU_OPT_STRING,
