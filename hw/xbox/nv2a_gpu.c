@@ -3136,8 +3136,16 @@ static void pgraph_method(NV2A_GPUState *d,
                 assert(false);
             }*/
             assert(glGetError() == GL_NO_ERROR);
+            glPopDebugGroup();
         } else {
             assert(parameter <= NV097_SET_BEGIN_END_OP_POLYGON);
+
+            /* Debug output */
+            {
+                char buffer[128];
+                sprintf(buffer,"NV2A: BEGIN_END 0x%X", parameter);
+                glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, buffer);
+            }
 
             pgraph_update_surface(d, true);
 
