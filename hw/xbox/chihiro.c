@@ -19,6 +19,7 @@
 
 #include "hw/hw.h"
 #include "hw/boards.h"
+#include "hw/i386/pc.h"
 #include "hw/ide.h"
 #include "hw/loader.h"
 #include "hw/isa/isa.h"
@@ -203,7 +204,12 @@ static void chihiro_ide_interface_init(const char *rom_file,
     assert(!bdrv_memory_open(dinfo->bdrv, interface_space,
                              memory_region_size(interface)));
 
+#if 0
     drive_append(dinfo);
+#else
+    printf("Chihiro broken since v1.7.0: drive_append missing\n");
+    assert(0);
+#endif
 }
 
 static void chihiro_init(QEMUMachineInitArgs *args)
@@ -276,7 +282,7 @@ static QEMUMachine chihiro_machine = {
     .no_floppy = 1,
     .no_cdrom = 1,
     .no_sdcard = 1,
-    DEFAULT_MACHINE_OPTIONS
+    PC_DEFAULT_MACHINE_OPTIONS
 };
 
 static void chihiro_machine_init(void) {
