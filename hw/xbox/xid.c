@@ -187,7 +187,9 @@ static const int gamepad_mapping[] = {
 static void xbox_gamepad_keyboard_event(void *opaque, int keycode)
 {
     USBXIDState *s = opaque;
-
+#if 1
+    printf("Broken in v2.0.0 because index_from_keycode was removed, on Linux I found no way to query a QKeyCode\n");
+#else
     bool up = keycode & 0x80;
     QKeyCode code = index_from_keycode(keycode & 0x7f);
     if (code >= Q_KEY_CODE_MAX) return;
@@ -209,6 +211,7 @@ static void xbox_gamepad_keyboard_event(void *opaque, int keycode)
     default:
         break;
     }
+#endif
 }
 
 
@@ -259,7 +262,7 @@ static void usb_xid_handle_control(USBDevice *dev, USBPacket *p,
         }
         break;
     /* XID requests */
-    case InterfaceRequestVendor | USB_REQ_GET_DESCRIPTOR:
+    case VendorInterfaceRequest | USB_REQ_GET_DESCRIPTOR:
         DPRINTF("xid GET_DESCRIPTOR 0x%x\n", value);
         if (value == 0x4200) {
             assert(s->xid_desc->bLength <= length);
@@ -269,7 +272,7 @@ static void usb_xid_handle_control(USBDevice *dev, USBPacket *p,
             assert(false);
         }
         break;
-    case InterfaceRequestVendor | XID_GET_CAPABILITIES:
+    case VendorInterfaceRequest | XID_GET_CAPABILITIES:
         DPRINTF("xid XID_GET_CAPABILITIES 0x%x\n", value);
         //assert(false);
         break;

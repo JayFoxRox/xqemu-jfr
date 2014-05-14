@@ -2973,11 +2973,23 @@ if test "$opengl" != "no" ; then
 int main(void) { return GL_VERSION != 0; }
 EOF
   elif test "$mingw32" = "yes" ; then
-	opengl_libs="-lOpenGL32 -lglu32 -lglew32 -lgdi32"
-	cat > $TMPC << EOF
+    opengl_libs="-lOpenGL32 -lglu32 -lglew32 -lgdi32"
+    cat > $TMPC << EOF
 #include <windows.h>
 #include <GL/glew.h>
 #include <GL/gl.h>
+#include <GL/glext.h>
+#include <GL/wglext.h>
+int main(void) { return GL_VERSION != 0; }
+EOF
+  else
+    # change this to "if false; then" you want EGL instead of GLX
+    # also requires a change in Makefile.target, look for "obj-gl"
+    if true; then
+      opengl_libs="-lGLEW -lGLU -lGL -lX11"
+      cat > $TMPC << EOF
+#include <GL/glew.h>
+#include <GL/glu.h>
 #include <GL/glx.h>
 #include <X11/Xlib.h>
 int main(void) { glXGetClientString(XOpenDisplay(0), GL_VERSION); return 0; }
@@ -4952,6 +4964,10 @@ case "$target_name" in
   s390x)
   ;;
   unicore32)
+  ;;
+  xbox)
+    TARGET_ARCH=i386
+    TARGET_BASE_ARCH=i386
   ;;
   xtensa|xtensaeb)
     TARGET_ARCH=xtensa

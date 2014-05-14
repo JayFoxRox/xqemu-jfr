@@ -35,6 +35,7 @@
 //FIXME: Replace "2bl" by "bootloader"
 
 //FIXME: tons of useless include here
+#include "hw/pci/pci.h" /* FIXME: included for the address_space_memory which should be included from elsewhere */
 #include "hw/hw.h"
 #include "hw/boards.h"
 #include "hw/loader.h"
@@ -341,7 +342,7 @@ void mcpx_rom_hide(struct XBOX_MCPXState* s)
 
   if (s->rom.enabled) {
     // Restore flash image
-    cpu_physical_memory_write_rom(bootrom_addr,
+    cpu_physical_memory_write_rom(&address_space_memory, bootrom_addr,
                                   s->rom.flash_data,
                                   bootrom_size);
     printf("flash image written!\n");
@@ -382,7 +383,7 @@ void mcpx_rom_show(struct XBOX_MCPXState* s) {
         0x0000ffff,0x00CF9b00, //+8  = 2,3
         0x0000ffff,0x00CF9300  //+16 = 4,5
       };
-      cpu_physical_memory_write_rom(bootrom_addr+bootrom_dt_offset,
+      cpu_physical_memory_write_rom(&address_space_memory, bootrom_addr+bootrom_dt_offset,
                                     dt,
                                     sizeof(dt));
 
@@ -391,12 +392,12 @@ void mcpx_rom_show(struct XBOX_MCPXState* s) {
         0x18,0x00, // This seems like a Microsoft bug? Doesn't the size have to be 0x17 (0x18-1)?
         0xd8,0xff,0xff,0xff
       };
-      cpu_physical_memory_write_rom(bootrom_addr+bootrom_dt_pointer_offset,
+      cpu_physical_memory_write_rom(&address_space_memory, bootrom_addr+bootrom_dt_pointer_offset,
                                     dt_pointer,
                                     sizeof(dt_pointer));
 
     } else {
-      cpu_physical_memory_write_rom(bootrom_addr,
+      cpu_physical_memory_write_rom(&address_space_memory, bootrom_addr,
                                     s->rom.bootrom_data,
                                     bootrom_size);
       printf("image written to memory\n");

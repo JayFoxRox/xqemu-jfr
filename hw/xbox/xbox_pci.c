@@ -141,7 +141,7 @@ void xbox_pci_init(qemu_irq *pic,
                    MemoryRegion *ram_memory,
                    PCIBus **out_host_bus,
                    ISABus **out_isa_bus,
-                   i2c_bus **out_smbus,
+                   I2CBus **out_smbus,
                    PCIBus **out_agp_bus)
 {
     DeviceState *host;
@@ -270,7 +270,7 @@ static void xbox_smbus_class_init(ObjectClass *klass, void *data)
     k->class_id     = PCI_CLASS_SERIAL_SMBUS;
 
     dc->desc        = "nForce PCI System Management";
-    dc->no_user     = 1;
+    dc->cannot_instantiate_with_device_add_yet = true; /* FIXME explain why */
 }
 
 static const TypeInfo xbox_smbus_info = {
@@ -356,7 +356,6 @@ static void xbox_lpc_class_init(ObjectClass *klass, void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
 
-    k->no_hotplug   = 1;
     k->init         = xbox_lpc_initfn;
     //k->config_write = xbox_lpc_config_write;
     k->vendor_id    = PCI_VENDOR_ID_NVIDIA;
@@ -365,7 +364,8 @@ static void xbox_lpc_class_init(ObjectClass *klass, void *data)
     k->class_id     = PCI_CLASS_BRIDGE_ISA;
 
     dc->desc        = "nForce LPC Bridge";
-    dc->no_user     = 1;
+    dc->cannot_instantiate_with_device_add_yet = true; /* FIXME explain why */
+    dc->hotpluggable = false;
     dc->reset       = xbox_lpc_reset;
     //dc->vmsd        = &vmstate_xbox_lpc;
 }
@@ -428,7 +428,6 @@ static void xbox_pci_class_init(ObjectClass *klass, void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
 
-    k->no_hotplug = 1;
     k->init = xbox_pci_initfn;
     //k->config_write = xbox_pci_write_config;
     k->vendor_id = PCI_VENDOR_ID_NVIDIA;
@@ -437,7 +436,8 @@ static void xbox_pci_class_init(ObjectClass *klass, void *data)
     k->class_id = PCI_CLASS_BRIDGE_HOST;
 
     dc->desc = "Xbox PCI Host";
-    dc->no_user = 1;
+    dc->cannot_instantiate_with_device_add_yet = true; /* FIXME explain why */
+    dc->hotpluggable = false;
 }
 
 static const TypeInfo xbox_pci_info = {
@@ -478,7 +478,7 @@ static void xbox_pcihost_class_init(ObjectClass *klass, void *data)
     SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
 
     k->init = xbox_pcihost_initfn;
-    dc->no_user = 1;
+    dc->cannot_instantiate_with_device_add_yet = true; /* FIXME explain why */
 }
 
 static const TypeInfo xbox_pcihost_info = {

@@ -549,7 +549,7 @@ static int smbus_smc_init(SMBusDevice *dev)
   // Set scratch register
   smc_dev->scratch = 0x00;
   //FIXME: Remove or make an option
-  if (1) {
+  if (0) {
     if (1) { smc_dev->scratch |= 0x02; } // Display fatal error
     if (1) { smc_dev->scratch |= 0x04; } // Skip boot anim hack
   }
@@ -596,7 +596,7 @@ static void smbus_smc_register_devices(void)
 type_init(smbus_smc_register_devices)
 
 
-void smbus_xbox_smc_init(i2c_bus *smbus, int address)
+void smbus_xbox_smc_init(I2CBus *smbus, int address)
 {
     DeviceState *smc;
     smc = qdev_create((BusState *)smbus, "smbus-xbox-smc");

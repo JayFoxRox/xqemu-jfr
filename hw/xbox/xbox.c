@@ -145,7 +145,7 @@ void xbox_init_common(QEMUMachineInitArgs *args,
 
     ISADevice *rtc_state;
     ISADevice *pit;
-    i2c_bus *smbus;
+    I2CBus *smbus;
     PCIBus *agp_bus;
 
 

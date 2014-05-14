@@ -108,7 +108,7 @@ static void smbus_cx25871_register_devices(void)
 type_init(smbus_cx25871_register_devices)
 
 
-void smbus_cx25871_init(i2c_bus *smbus, int address)
+void smbus_cx25871_init(I2CBus *smbus, int address)
 {
     DeviceState *cx;
     cx = qdev_create((BusState *)smbus, "smbus-cx25871");

@@ -2441,12 +2441,11 @@ static void pgraph_update_surface(NV2A_GPUState *d, bool upload)
                            color_data + d->pgraph.surface_color.offset);
             assert(glGetError() == GL_NO_ERROR);
 
-            memory_region_set_client_dirty(d->vram,
-                                           color_dma.address
-                                                + d->pgraph.surface_color.offset,
-                                           d->pgraph.surface_color.pitch
-                                                * d->pgraph.surface_height,
-                                           DIRTY_MEMORY_VGA);
+            memory_region_set_dirty(d->vram,
+                                    color_dma.address
+                                         + d->pgraph.surface_color.offset,
+                                    d->pgraph.surface_color.pitch
+                                         * d->pgraph.surface_height);
 
             d->pgraph.surface_color.draw_dirty = false;
 
@@ -4092,9 +4091,8 @@ static void pfifo_write(void *opaque, hwaddr addr,
             d->pfifo.cache1.pull_enabled = true;
 
             /* fire up puller thread */
-            qemu_thread_create(&d->pfifo.puller_thread,
-                               pfifo_puller_thread,
-                               d, QEMU_THREAD_DETACHED);
+            qemu_thread_create(&d->pfifo.puller_thread, "nv2a/pfifo_puller",
+                               pfifo_puller_thread, d, QEMU_THREAD_DETACHED);
         } else if (!(val & NV_PFIFO_CACHE1_PULL0_ACCESS)
                      && d->pfifo.cache1.pull_enabled) {
             d->pfifo.cache1.pull_enabled = false;
@@ -5255,7 +5253,7 @@ static int nv2a_gpu_initfn(PCIDevice *dev)
 
     d->hw_ops = *vga->hw_ops;
     d->hw_ops.gfx_update = nv2a_gpu_vga_gfx_update;
-    vga->con = graphic_console_init(DEVICE(dev), &d->hw_ops, vga);
+    vga->con = graphic_console_init(DEVICE(dev), 0, &d->hw_ops, vga);
 
 
     /* mmio */

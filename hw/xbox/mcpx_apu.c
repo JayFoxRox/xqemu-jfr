@@ -149,7 +149,7 @@ static uint32_t voice_get_mask(MCPXAPUState *d,
     assert(voice_handle != 0xFFFF);
     hwaddr voice = d->regs[NV_PAPU_VPVADDR]
                     + voice_handle * NV_PAVS_SIZE;
-    return (ldl_le_phys(voice + offset) & mask) >> (ffs(mask)-1);
+    return (ldl_le_phys(&address_space_memory, voice + offset) & mask) >> (ffs(mask)-1);
 }
 static void voice_set_mask(MCPXAPUState *d,
                            unsigned int voice_handle,
@@ -160,8 +160,8 @@ static void voice_set_mask(MCPXAPUState *d,
     assert(voice_handle != 0xFFFF);
     hwaddr voice = d->regs[NV_PAPU_VPVADDR]
                     + voice_handle * NV_PAVS_SIZE;
-    uint32_t v = ldl_le_phys(voice + offset) & ~mask;
-    stl_le_phys(voice + offset,
+    uint32_t v = ldl_le_phys(&address_space_memory, voice + offset) & ~mask;
+    stl_le_phys(&address_space_memory, voice + offset,
                 v | ((val << (ffs(mask)-1)) & mask));
 }
 
@@ -226,7 +226,7 @@ static void mcpx_apu_write(void *opaque, hwaddr addr,
         /* 'magic write'
          * This value is expected to be written to FEMEMADDR on completion of
          * something to do with notifies. Just do it now :/ */
-        stl_le_phys(d->regs[NV_PAPU_FEMEMADDR], val);
+        stl_le_phys(&address_space_memory, d->regs[NV_PAPU_FEMEMADDR], val);
         d->regs[addr] = val;
         break;
     default:
