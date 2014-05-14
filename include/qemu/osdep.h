@@ -215,4 +215,40 @@ bool fips_get_state(void);
  */
 char *qemu_get_local_state_pathname(const char *relative_pathname);
 
+/* Find program directory, and save it for later usage with
+ * qemu_get_exec_dir().
+ * Try OS specific API first, if not working, parse from argv0. */
+void qemu_init_exec_dir(const char *argv0);
+
+/* Get the saved exec dir.
+ * Caller needs to release the returned string by g_free() */
+char *qemu_get_exec_dir(void);
+
+/**
+ * qemu_getauxval:
+ * @type: the auxiliary vector key to lookup
+ *
+ * Search the auxiliary vector for @type, returning the value
+ * or 0 if @type is not present.
+ */
+#if defined(CONFIG_GETAUXVAL) || defined(__linux__)
+unsigned long qemu_getauxval(unsigned long type);
+#else
+static inline unsigned long qemu_getauxval(unsigned long type) { return 0; }
+#endif
+
+/**
+ * qemu_init_auxval:
+ * @envp: the third argument to main
+ *
+ * If supported and required, locate the auxiliary vector at program startup.
+ */
+#if defined(CONFIG_GETAUXVAL) || !defined(__linux__)
+static inline void qemu_init_auxval(char **envp) { }
+#else
+void qemu_init_auxval(char **envp);
+#endif
+
+void qemu_set_tty_echo(int fd, bool echo);
+
 #endif

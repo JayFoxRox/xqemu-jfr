@@ -228,7 +228,6 @@ STEXI
 Allocate guest RAM from a temporarily created file in @var{path}.
 ETEXI
 
-#ifdef MAP_POPULATE
 DEF("mem-prealloc", 0, QEMU_OPTION_mem_prealloc,
     "-mem-prealloc   preallocate guest memory (use with -mem-path)\n",
     QEMU_ARCH_ALL)
@@ -237,7 +236,6 @@ STEXI
 @findex -mem-prealloc
 Preallocate memory when using -mem-path.
 ETEXI
-#endif
 
 DEF("k", HAS_ARG, QEMU_OPTION_k,
     "-k language     use keyboard layout (for example 'fr' for French)\n",
@@ -330,9 +328,11 @@ possible drivers and properties, use @code{-device help} and
 ETEXI
 
 DEF("name", HAS_ARG, QEMU_OPTION_name,
-    "-name string1[,process=string2]\n"
+    "-name string1[,process=string2][,debug-threads=on|off]\n"
     "                set the name of the guest\n"
-    "                string1 sets the window title and string2 the process name (on Linux)\n",
+    "                string1 sets the window title and string2 the process name (on Linux)\n"
+    "                When debug-threads is enabled, individual threads are given a separate name (on Linux)\n"
+    "                NOTE: The thread names are for debugging and not a stable API.\n",
     QEMU_ARCH_ALL)
 STEXI
 @item -name @var{name}
@@ -341,6 +341,7 @@ Sets the @var{name} of the guest.
 This name will be displayed in the SDL window caption.
 The @var{name} will also be used for the VNC server.
 Also optionally set the top visible process name in Linux.
+Naming of individual threads can also be enabled on Linux to aid debugging.
 ETEXI
 
 DEF("uuid", HAS_ARG, QEMU_OPTION_uuid,
@@ -809,6 +810,7 @@ ETEXI
 DEF("display", HAS_ARG, QEMU_OPTION_display,
     "-display sdl[,frame=on|off][,alt_grab=on|off][,ctrl_grab=on|off]\n"
     "            [,window_close=on|off]|curses|none|\n"
+    "            gtk[,grab_on_hover=on|off]|\n"
     "            vnc=<display>[,<optargs>]\n"
     "                select display type\n", QEMU_ARCH_ALL)
 STEXI
@@ -832,6 +834,10 @@ graphics card, but its output will not be displayed to the QEMU
 user. This option differs from the -nographic option in that it
 only affects what is done with video output; -nographic also changes
 the destination of the serial and parallel port data.
+@item gtk
+Display video output in a GTK window. This interface provides drop-down
+menus and other UI elements to configure and control the VM during
+runtime.
 @item vnc
 Start a VNC server on display <arg>
 @end table
@@ -1037,7 +1043,7 @@ Rotate graphical output some deg left (only PXA LCD).
 ETEXI
 
 DEF("vga", HAS_ARG, QEMU_OPTION_vga,
-    "-vga [std|cirrus|vmware|qxl|xenfb|none]\n"
+    "-vga [std|cirrus|vmware|qxl|xenfb|tcx|cg3|none]\n"
     "                select video card type\n", QEMU_ARCH_ALL)
 STEXI
 @item -vga @var{type}
@@ -1062,6 +1068,14 @@ card.
 QXL paravirtual graphic card.  It is VGA compatible (including VESA
 2.0 VBE support).  Works best with qxl guest drivers installed though.
 Recommended choice when using the spice protocol.
+@item tcx
+(sun4m only) Sun TCX framebuffer. This is the default framebuffer for
+sun4m machines and offers both 8-bit and 24-bit colour depths at a
+fixed resolution of 1024x768.
+@item cg3
+(sun4m only) Sun cgthree framebuffer. This is a simple 8-bit framebuffer
+for sun4m machines available in both 1024x768 (OpenBIOS) and 1152x900 (OBP)
+resolutions aimed at people wishing to run older Solaris versions.
 @item none
 Disable VGA card.
 @end table
@@ -1409,6 +1423,12 @@ DEF("net", HAS_ARG, QEMU_OPTION_net,
     "                Use group 'groupname' and mode 'octalmode' to change default\n"
     "                ownership and permissions for communication port.\n"
 #endif
+#ifdef CONFIG_NETMAP
+    "-net netmap,ifname=name[,devname=nmname]\n"
+    "                attach to the existing netmap-enabled network interface 'name', or to a\n"
+    "                VALE port (created on the fly) called 'name' ('nmname' is name of the \n"
+    "                netmap device, defaults to '/dev/netmap')\n"
+#endif
     "-net dump[,vlan=n][,file=f][,len=n]\n"
     "                dump traffic on vlan 'n' to file 'f' (max n bytes per packet)\n"
     "-net none       use it alone to have zero network devices. If no -net option\n"
@@ -1422,6 +1442,9 @@ DEF("netdev", HAS_ARG, QEMU_OPTION_netdev,
     "bridge|"
 #ifdef CONFIG_VDE
     "vde|"
+#endif
+#ifdef CONFIG_NETMAP
+    "netmap|"
 #endif
     "socket|"
     "hubport],id=str[,option][,option][,...]\n", QEMU_ARCH_ALL)
@@ -2089,7 +2112,7 @@ ETEXI
 DEF("iscsi", HAS_ARG, QEMU_OPTION_iscsi,
     "-iscsi [user=user][,password=password]\n"
     "       [,header-digest=CRC32C|CR32C-NONE|NONE-CRC32C|NONE\n"
-    "       [,initiator-name=iqn]\n"
+    "       [,initiator-name=initiator-iqn][,id=target-iqn]\n"
     "                iSCSI session parameters\n", QEMU_ARCH_ALL)
 STEXI
 
@@ -2412,6 +2435,8 @@ vc:80Cx24C
 No device is allocated.
 @item null
 void device
+@item chardev:@var{id}
+Use a named character device defined with the @code{-chardev} option.
 @item /dev/XXX
 [Linux only] Use host tty, e.g. @file{/dev/ttyS0}. The host serial port
 parameters are set according to the emulated ones.

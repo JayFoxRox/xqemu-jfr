@@ -945,9 +945,15 @@ static void xilinx_enet_realize(DeviceState *dev, Error **errp)
     Error *local_errp = NULL;
 
     object_property_add_link(OBJECT(ds), "enet", "xlnx.axi-ethernet",
-                             (Object **) &ds->enet, &local_errp);
+                             (Object **) &ds->enet,
+                             object_property_allow_set_link,
+                             OBJ_PROP_LINK_UNREF_ON_RELEASE,
+                             &local_errp);
     object_property_add_link(OBJECT(cs), "enet", "xlnx.axi-ethernet",
-                             (Object **) &cs->enet, &local_errp);
+                             (Object **) &cs->enet,
+                             object_property_allow_set_link,
+                             OBJ_PROP_LINK_UNREF_ON_RELEASE,
+                             &local_errp);
     if (local_errp) {
         goto xilinx_enet_realize_fail;
     }
@@ -980,26 +986,27 @@ static void xilinx_enet_init(Object *obj)
 {
     XilinxAXIEnet *s = XILINX_AXI_ENET(obj);
     SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
-    Error *errp = NULL;
 
     object_property_add_link(obj, "axistream-connected", TYPE_STREAM_SLAVE,
-                             (Object **) &s->tx_data_dev, &errp);
-    assert_no_error(errp);
+                             (Object **) &s->tx_data_dev,
+                             qdev_prop_allow_set_link_before_realize,
+                             OBJ_PROP_LINK_UNREF_ON_RELEASE,
+                             &error_abort);
     object_property_add_link(obj, "axistream-control-connected",
                              TYPE_STREAM_SLAVE,
-                             (Object **) &s->tx_control_dev, &errp);
-    assert_no_error(errp);
+                             (Object **) &s->tx_control_dev,
+                             qdev_prop_allow_set_link_before_realize,
+                             OBJ_PROP_LINK_UNREF_ON_RELEASE,
+                             &error_abort);
 
     object_initialize(&s->rx_data_dev, sizeof(s->rx_data_dev),
                       TYPE_XILINX_AXI_ENET_DATA_STREAM);
     object_initialize(&s->rx_control_dev, sizeof(s->rx_control_dev),
                       TYPE_XILINX_AXI_ENET_CONTROL_STREAM);
     object_property_add_child(OBJECT(s), "axistream-connected-target",
-                              (Object *)&s->rx_data_dev, &errp);
-    assert_no_error(errp);
+                              (Object *)&s->rx_data_dev, &error_abort);
     object_property_add_child(OBJECT(s), "axistream-control-connected-target",
-                              (Object *)&s->rx_control_dev, &errp);
-    assert_no_error(errp);
+                              (Object *)&s->rx_control_dev, &error_abort);
 
     sysbus_init_irq(sbd, &s->irq);
 

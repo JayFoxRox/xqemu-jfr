@@ -369,8 +369,8 @@ static int xen_remove_from_physmap(XenIOState *state,
     phys_offset = physmap->phys_offset;
     size = physmap->size;
 
-    DPRINTF("unmapping vram to %"HWADDR_PRIx" - %"HWADDR_PRIx", from ",
-            "%"HWADDR_PRIx"\n", phys_offset, phys_offset + size, start_addr);
+    DPRINTF("unmapping vram to %"HWADDR_PRIx" - %"HWADDR_PRIx", at "
+            "%"HWADDR_PRIx"\n", start_addr, start_addr + size, phys_offset);
 
     size >>= TARGET_PAGE_BITS;
     start_addr >>= TARGET_PAGE_BITS;
@@ -1001,7 +1001,7 @@ static void xen_exit_notifier(Notifier *n, void *data)
     xs_daemon_close(state->xenstore);
 }
 
-int xen_init(void)
+int xen_init(QEMUMachine *machine)
 {
     xen_xc = xen_xc_interface_open(0, 0, 0);
     if (xen_xc == XC_HANDLER_INITIAL_VALUE) {

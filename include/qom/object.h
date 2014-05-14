@@ -358,7 +358,8 @@ struct ObjectClass
     Type type;
     GSList *interfaces;
 
-    const char *cast_cache[OBJECT_CLASS_CAST_CACHE];
+    const char *object_cast_cache[OBJECT_CLASS_CAST_CACHE];
+    const char *class_cast_cache[OBJECT_CLASS_CAST_CACHE];
 
     ObjectUnparent *unparent;
 };
@@ -535,6 +536,7 @@ struct InterfaceClass
     ObjectClass parent_class;
     /*< private >*/
     ObjectClass *concrete_class;
+    Type interface_type;
 };
 
 #define TYPE_INTERFACE "interface"
@@ -944,12 +946,13 @@ void object_property_parse(Object *obj, const char *string,
  * object_property_print:
  * @obj: the object
  * @name: the name of the property
+ * @human: if true, print for human consumption
  * @errp: returns an error if this function fails
  *
  * Returns a string representation of the value of the property.  The
  * caller shall free the string.
  */
-char *object_property_print(Object *obj, const char *name,
+char *object_property_print(Object *obj, const char *name, bool human,
                             Error **errp);
 
 /**
@@ -969,6 +972,14 @@ const char *object_property_get_type(Object *obj, const char *name,
  * Returns: the root object of the composition tree
  */
 Object *object_get_root(void);
+
+/**
+ * object_get_canonical_path_component:
+ *
+ * Returns: The final component in the object's canonical path.  The canonical
+ * path is the path within the composition tree starting from the root.
+ */
+gchar *object_get_canonical_path_component(Object *obj);
 
 /**
  * object_get_canonical_path:
@@ -1056,12 +1067,29 @@ Object *object_resolve_path_component(Object *parent, const gchar *part);
 void object_property_add_child(Object *obj, const char *name,
                                Object *child, Error **errp);
 
+typedef enum {
+    /* Unref the link pointer when the property is deleted */
+    OBJ_PROP_LINK_UNREF_ON_RELEASE = 0x1,
+} ObjectPropertyLinkFlags;
+
+/**
+ * object_property_allow_set_link:
+ *
+ * The default implementation of the object_property_add_link() check()
+ * callback function.  It allows the link property to be set and never returns
+ * an error.
+ */
+void object_property_allow_set_link(Object *, const char *,
+                                    Object *, Error **);
+
 /**
  * object_property_add_link:
  * @obj: the object to add a property to
  * @name: the name of the property
  * @type: the qobj type of the link
  * @child: a pointer to where the link object reference is stored
+ * @check: callback to veto setting or NULL if the property is read-only
+ * @flags: additional options for the link
  * @errp: if an error occurs, a pointer to an area to store the area
  *
  * Links establish relationships between objects.  Links are unidirectional
@@ -1070,13 +1098,23 @@ void object_property_add_child(Object *obj, const char *name,
  *
  * Links form the graph in the object model.
  *
+ * The <code>@check()</code> callback is invoked when
+ * object_property_set_link() is called and can raise an error to prevent the
+ * link being set.  If <code>@check</code> is NULL, the property is read-only
+ * and cannot be set.
+ *
  * Ownership of the pointer that @child points to is transferred to the
  * link property.  The reference count for <code>*@child</code> is
  * managed by the property from after the function returns till the
- * property is deleted with object_property_del().
+ * property is deleted with object_property_del().  If the
+ * <code>@flags</code> <code>OBJ_PROP_LINK_UNREF_ON_RELEASE</code> bit is set,
+ * the reference count is decremented when the property is deleted.
  */
 void object_property_add_link(Object *obj, const char *name,
                               const char *type, Object **child,
+                              void (*check)(Object *obj, const char *name,
+                                            Object *val, Error **errp),
+                              ObjectPropertyLinkFlags flags,
                               Error **errp);
 
 /**

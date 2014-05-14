@@ -138,7 +138,8 @@ static int coroutine_fn backup_do_cow(BlockDriverState *bs,
 
         if (buffer_is_zero(iov.iov_base, iov.iov_len)) {
             ret = bdrv_co_write_zeroes(job->target,
-                                       start * BACKUP_SECTORS_PER_CLUSTER, n);
+                                       start * BACKUP_SECTORS_PER_CLUSTER,
+                                       n, BDRV_REQ_MAY_UNMAP);
         } else {
             ret = bdrv_co_writev(job->target,
                                  start * BACKUP_SECTORS_PER_CLUSTER, n,
@@ -180,8 +181,13 @@ static int coroutine_fn backup_before_write_notify(
         void *opaque)
 {
     BdrvTrackedRequest *req = opaque;
+    int64_t sector_num = req->offset >> BDRV_SECTOR_BITS;
+    int nb_sectors = req->bytes >> BDRV_SECTOR_BITS;
 
-    return backup_do_cow(req->bs, req->sector_num, req->nb_sectors, NULL);
+    assert((req->offset & (BDRV_SECTOR_SIZE - 1)) == 0);
+    assert((req->bytes & (BDRV_SECTOR_SIZE - 1)) == 0);
+
+    return backup_do_cow(req->bs, sector_num, nb_sectors, NULL);
 }
 
 static void backup_set_speed(BlockJob *job, int64_t speed, Error **errp)

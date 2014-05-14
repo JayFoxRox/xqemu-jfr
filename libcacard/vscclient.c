@@ -58,7 +58,7 @@ static QemuMutex socket_to_send_lock;
 static guint socket_tag;
 
 static void
-update_socket_watch(gboolean out);
+update_socket_watch(void);
 
 static gboolean
 do_socket_send(GIOChannel *source,
@@ -80,7 +80,7 @@ do_socket_send(GIOChannel *source,
     g_byte_array_remove_range(socket_to_send, 0, bw);
 
     if (socket_to_send->len == 0) {
-        update_socket_watch(FALSE);
+        update_socket_watch();
         return FALSE;
     }
     return TRUE;
@@ -89,7 +89,7 @@ do_socket_send(GIOChannel *source,
 static gboolean
 socket_prepare_sending(gpointer user_data)
 {
-    update_socket_watch(TRUE);
+    update_socket_watch();
 
     return FALSE;
 }
@@ -269,7 +269,7 @@ on_host_init(VSCMsgHeader *mhHeader, VSCMsgInit *incoming)
     send_msg(VSC_ReaderRemove, VSCARD_MINIMAL_READER_ID, NULL, 0);
     /* launch the event_thread. This will trigger reader adds for all the
      * existing readers */
-    qemu_thread_create(&thread_id, event_thread, NULL, 0);
+    qemu_thread_create(&thread_id, "vsc/event", event_thread, NULL, 0);
     return 0;
 }
 
@@ -407,7 +407,7 @@ do_socket_read(GIOChannel *source,
             }
             break;
         default:
-            g_warn_if_reached();
+            g_assert_not_reached();
             return FALSE;
         }
 
@@ -440,8 +440,10 @@ do_socket(GIOChannel *source,
 }
 
 static void
-update_socket_watch(gboolean out)
+update_socket_watch(void)
 {
+    gboolean out = socket_to_send->len > 0;
+
     if (socket_tag != 0) {
         g_source_remove(socket_tag);
     }
@@ -760,7 +762,7 @@ main(
 
     g_io_channel_unref(channel_stdin);
     g_io_channel_unref(channel_socket);
-    g_byte_array_unref(socket_to_send);
+    g_byte_array_free(socket_to_send, TRUE);
 
     closesocket(sock);
     return 0;

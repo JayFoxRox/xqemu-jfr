@@ -347,14 +347,14 @@ static void adlib_realizefn (DeviceState *dev, Error **errp)
     s->samples = AUD_get_buffer_size_out (s->voice) >> SHIFT;
     s->mixbuf = g_malloc0 (s->samples << SHIFT);
 
-    adlib_portio_list[1].offset = s->port;
-    adlib_portio_list[2].offset = s->port + 8;
+    adlib_portio_list[0].offset = s->port;
+    adlib_portio_list[1].offset = s->port + 8;
     portio_list_init (port_list, OBJECT(s), adlib_portio_list, s, "adlib");
     portio_list_add (port_list, isa_address_space_io(&s->parent_obj), 0);
 }
 
 static Property adlib_properties[] = {
-    DEFINE_PROP_HEX32  ("iobase",  AdlibState, port, 0x220),
+    DEFINE_PROP_UINT32 ("iobase",  AdlibState, port, 0x220),
     DEFINE_PROP_UINT32 ("freq",    AdlibState, freq,  44100),
     DEFINE_PROP_END_OF_LIST (),
 };

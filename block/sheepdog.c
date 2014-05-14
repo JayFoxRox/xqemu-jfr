@@ -91,6 +91,14 @@
 #define SD_NR_VDIS   (1U << 24)
 #define SD_DATA_OBJ_SIZE (UINT64_C(1) << 22)
 #define SD_MAX_VDI_SIZE (SD_DATA_OBJ_SIZE * MAX_DATA_OBJS)
+/*
+ * For erasure coding, we use at most SD_EC_MAX_STRIP for data strips and
+ * (SD_EC_MAX_STRIP - 1) for parity strips
+ *
+ * SD_MAX_COPIES is sum of number of data strips and parity strips.
+ */
+#define SD_EC_MAX_STRIP 16
+#define SD_MAX_COPIES (SD_EC_MAX_STRIP * 2 - 1)
 
 #define SD_INODE_SIZE (sizeof(SheepdogInode))
 #define CURRENT_VDI_ID 0
@@ -153,7 +161,7 @@ typedef struct SheepdogVdiReq {
     uint32_t id;
     uint32_t data_length;
     uint64_t vdi_size;
-    uint32_t vdi_id;
+    uint32_t base_vdi_id;
     uint8_t copies;
     uint8_t copy_policy;
     uint8_t reserved[2];
@@ -901,9 +909,9 @@ static void co_write_request(void *opaque)
 }
 
 /*
- * Return a socket discriptor to read/write objects.
+ * Return a socket descriptor to read/write objects.
  *
- * We cannot use this discriptor for other operations because
+ * We cannot use this descriptor for other operations because
  * the block driver may be on waiting response from the server.
  */
 static int get_sheep_fd(BDRVSheepdogState *s)
@@ -1375,9 +1383,9 @@ static int sd_open(BlockDriverState *bs, QDict *options, int flags,
 
     s->bs = bs;
 
-    opts = qemu_opts_create_nofail(&runtime_opts);
+    opts = qemu_opts_create(&runtime_opts, NULL, 0, &error_abort);
     qemu_opts_absorb_qdict(opts, options, &local_err);
-    if (error_is_set(&local_err)) {
+    if (local_err) {
         qerror_report_err(local_err);
         error_free(local_err);
         ret = -EINVAL;
@@ -1464,9 +1472,7 @@ out:
     return ret;
 }
 
-static int do_sd_create(BDRVSheepdogState *s, char *filename, int64_t vdi_size,
-                        uint32_t base_vid, uint32_t *vdi_id, int snapshot,
-                        uint8_t copy_policy)
+static int do_sd_create(BDRVSheepdogState *s, uint32_t *vdi_id, int snapshot)
 {
     SheepdogVdiReq hdr;
     SheepdogVdiRsp *rsp = (SheepdogVdiRsp *)&hdr;
@@ -1483,11 +1489,11 @@ static int do_sd_create(BDRVSheepdogState *s, char *filename, int64_t vdi_size,
      * does not fit in buf?  For now, just truncate and avoid buffer overrun.
      */
     memset(buf, 0, sizeof(buf));
-    pstrcpy(buf, sizeof(buf), filename);
+    pstrcpy(buf, sizeof(buf), s->name);
 
     memset(&hdr, 0, sizeof(hdr));
     hdr.opcode = SD_OP_NEW_VDI;
-    hdr.vdi_id = base_vid;
+    hdr.base_vdi_id = s->inode.vdi_id;
 
     wlen = SD_MAX_VDI_LEN;
 
@@ -1495,8 +1501,9 @@ static int do_sd_create(BDRVSheepdogState *s, char *filename, int64_t vdi_size,
     hdr.snapid = snapshot;
 
     hdr.data_length = wlen;
-    hdr.vdi_size = vdi_size;
-    hdr.copy_policy = copy_policy;
+    hdr.vdi_size = s->inode.vdi_size;
+    hdr.copy_policy = s->inode.copy_policy;
+    hdr.copies = s->inode.nr_copies;
 
     ret = do_req(fd, (SheepdogReq *)&hdr, buf, &wlen, &rlen);
 
@@ -1507,7 +1514,7 @@ static int do_sd_create(BDRVSheepdogState *s, char *filename, int64_t vdi_size,
     }
 
     if (rsp->result != SD_RES_SUCCESS) {
-        error_report("%s, %s", sd_strerror(rsp->result), filename);
+        error_report("%s, %s", sd_strerror(rsp->result), s->inode.name);
         return -EIO;
     }
 
@@ -1527,7 +1534,8 @@ static int sd_prealloc(const char *filename)
     Error *local_err = NULL;
     int ret;
 
-    ret = bdrv_file_open(&bs, filename, NULL, BDRV_O_RDWR, &local_err);
+    ret = bdrv_open(&bs, filename, NULL, NULL, BDRV_O_RDWR | BDRV_O_PROTOCOL,
+                    NULL, &local_err);
     if (ret < 0) {
         qerror_report_err(local_err);
         error_free(local_err);
@@ -1564,27 +1572,79 @@ out:
     return ret;
 }
 
+/*
+ * Sheepdog support two kinds of redundancy, full replication and erasure
+ * coding.
+ *
+ * # create a fully replicated vdi with x copies
+ * -o redundancy=x (1 <= x <= SD_MAX_COPIES)
+ *
+ * # create a erasure coded vdi with x data strips and y parity strips
+ * -o redundancy=x:y (x must be one of {2,4,8,16} and 1 <= y < SD_EC_MAX_STRIP)
+ */
+static int parse_redundancy(BDRVSheepdogState *s, const char *opt)
+{
+    struct SheepdogInode *inode = &s->inode;
+    const char *n1, *n2;
+    long copy, parity;
+    char p[10];
+
+    pstrcpy(p, sizeof(p), opt);
+    n1 = strtok(p, ":");
+    n2 = strtok(NULL, ":");
+
+    if (!n1) {
+        return -EINVAL;
+    }
+
+    copy = strtol(n1, NULL, 10);
+    if (copy > SD_MAX_COPIES || copy < 1) {
+        return -EINVAL;
+    }
+    if (!n2) {
+        inode->copy_policy = 0;
+        inode->nr_copies = copy;
+        return 0;
+    }
+
+    if (copy != 2 && copy != 4 && copy != 8 && copy != 16) {
+        return -EINVAL;
+    }
+
+    parity = strtol(n2, NULL, 10);
+    if (parity >= SD_EC_MAX_STRIP || parity < 1) {
+        return -EINVAL;
+    }
+
+    /*
+     * 4 bits for parity and 4 bits for data.
+     * We have to compress upper data bits because it can't represent 16
+     */
+    inode->copy_policy = ((copy / 2) << 4) + parity;
+    inode->nr_copies = copy + parity;
+
+    return 0;
+}
+
 static int sd_create(const char *filename, QEMUOptionParameter *options,
                      Error **errp)
 {
     int ret = 0;
-    uint32_t vid = 0, base_vid = 0;
-    int64_t vdi_size = 0;
+    uint32_t vid = 0;
     char *backing_file = NULL;
     BDRVSheepdogState *s;
-    char vdi[SD_MAX_VDI_LEN], tag[SD_MAX_VDI_TAG_LEN];
+    char tag[SD_MAX_VDI_TAG_LEN];
     uint32_t snapid;
     bool prealloc = false;
     Error *local_err = NULL;
 
     s = g_malloc0(sizeof(BDRVSheepdogState));
 
-    memset(vdi, 0, sizeof(vdi));
     memset(tag, 0, sizeof(tag));
     if (strstr(filename, "://")) {
-        ret = sd_parse_uri(s, filename, vdi, &snapid, tag);
+        ret = sd_parse_uri(s, filename, s->name, &snapid, tag);
     } else {
-        ret = parse_vdiname(s, filename, vdi, &snapid, tag);
+        ret = parse_vdiname(s, filename, s->name, &snapid, tag);
     }
     if (ret < 0) {
         goto out;
@@ -1592,7 +1652,7 @@ static int sd_create(const char *filename, QEMUOptionParameter *options,
 
     while (options && options->name) {
         if (!strcmp(options->name, BLOCK_OPT_SIZE)) {
-            vdi_size = options->value.n;
+            s->inode.vdi_size = options->value.n;
         } else if (!strcmp(options->name, BLOCK_OPT_BACKING_FILE)) {
             backing_file = options->value.s;
         } else if (!strcmp(options->name, BLOCK_OPT_PREALLOC)) {
@@ -1606,11 +1666,18 @@ static int sd_create(const char *filename, QEMUOptionParameter *options,
                 ret = -EINVAL;
                 goto out;
             }
+        } else if (!strcmp(options->name, BLOCK_OPT_REDUNDANCY)) {
+            if (options->value.s) {
+                ret = parse_redundancy(s, options->value.s);
+                if (ret < 0) {
+                    goto out;
+                }
+            }
         }
         options++;
     }
 
-    if (vdi_size > SD_MAX_VDI_SIZE) {
+    if (s->inode.vdi_size > SD_MAX_VDI_SIZE) {
         error_report("too big image size");
         ret = -EINVAL;
         goto out;
@@ -1618,7 +1685,7 @@ static int sd_create(const char *filename, QEMUOptionParameter *options,
 
     if (backing_file) {
         BlockDriverState *bs;
-        BDRVSheepdogState *s;
+        BDRVSheepdogState *base;
         BlockDriver *drv;
 
         /* Currently, only Sheepdog backing image is supported. */
@@ -1629,28 +1696,28 @@ static int sd_create(const char *filename, QEMUOptionParameter *options,
             goto out;
         }
 
-        ret = bdrv_file_open(&bs, backing_file, NULL, 0, &local_err);
+        bs = NULL;
+        ret = bdrv_open(&bs, backing_file, NULL, NULL, BDRV_O_PROTOCOL, NULL,
+                        &local_err);
         if (ret < 0) {
             qerror_report_err(local_err);
             error_free(local_err);
             goto out;
         }
 
-        s = bs->opaque;
+        base = bs->opaque;
 
-        if (!is_snapshot(&s->inode)) {
+        if (!is_snapshot(&base->inode)) {
             error_report("cannot clone from a non snapshot vdi");
             bdrv_unref(bs);
             ret = -EINVAL;
             goto out;
         }
-
-        base_vid = s->inode.vdi_id;
+        s->inode.vdi_id = base->inode.vdi_id;
         bdrv_unref(bs);
     }
 
-    /* TODO: allow users to specify copy number */
-    ret = do_sd_create(s, vdi, vdi_size, base_vid, &vid, 0, 0);
+    ret = do_sd_create(s, &vid, 0);
     if (!prealloc || ret) {
         goto out;
     }
@@ -1679,7 +1746,7 @@ static void sd_close(BlockDriverState *bs)
     memset(&hdr, 0, sizeof(hdr));
 
     hdr.opcode = SD_OP_RELEASE_VDI;
-    hdr.vdi_id = s->inode.vdi_id;
+    hdr.base_vdi_id = s->inode.vdi_id;
     wlen = strlen(s->name) + 1;
     hdr.data_length = wlen;
     hdr.flags = SD_FLAG_CMD_WRITE;
@@ -1782,7 +1849,7 @@ static bool sd_delete(BDRVSheepdogState *s)
     unsigned int wlen = SD_MAX_VDI_LEN, rlen = 0;
     SheepdogVdiReq hdr = {
         .opcode = SD_OP_DEL_VDI,
-        .vdi_id = s->inode.vdi_id,
+        .base_vdi_id = s->inode.vdi_id,
         .data_length = wlen,
         .flags = SD_FLAG_CMD_WRITE,
     };
@@ -1829,12 +1896,11 @@ static int sd_create_branch(BDRVSheepdogState *s)
 
     /*
      * Even If deletion fails, we will just create extra snapshot based on
-     * the workding VDI which was supposed to be deleted. So no need to
+     * the working VDI which was supposed to be deleted. So no need to
      * false bail out.
      */
     deleted = sd_delete(s);
-    ret = do_sd_create(s, s->name, s->inode.vdi_size, s->inode.vdi_id, &vid,
-                       !deleted, s->inode.copy_policy);
+    ret = do_sd_create(s, &vid, !deleted);
     if (ret) {
         goto out;
     }
@@ -1985,13 +2051,14 @@ static coroutine_fn int sd_co_writev(BlockDriverState *bs, int64_t sector_num,
 {
     SheepdogAIOCB *acb;
     int ret;
+    int64_t offset = (sector_num + nb_sectors) * BDRV_SECTOR_SIZE;
+    BDRVSheepdogState *s = bs->opaque;
 
-    if (bs->growable && sector_num + nb_sectors > bs->total_sectors) {
-        ret = sd_truncate(bs, (sector_num + nb_sectors) * BDRV_SECTOR_SIZE);
+    if (bs->growable && offset > s->inode.vdi_size) {
+        ret = sd_truncate(bs, offset);
         if (ret < 0) {
             return ret;
         }
-        bs->total_sectors = sector_num + nb_sectors;
     }
 
     acb = sd_aio_setup(bs, qiov, sector_num, nb_sectors);
@@ -2097,8 +2164,7 @@ static int sd_snapshot_create(BlockDriverState *bs, QEMUSnapshotInfo *sn_info)
         goto cleanup;
     }
 
-    ret = do_sd_create(s, s->name, s->inode.vdi_size, s->inode.vdi_id, &new_vid,
-                       1, s->inode.copy_policy);
+    ret = do_sd_create(s, &new_vid, 1);
     if (ret < 0) {
         error_report("failed to create inode for snapshot. %s",
                      strerror(errno));
@@ -2128,7 +2194,7 @@ cleanup:
  * We implement rollback(loadvm) operation to the specified snapshot by
  * 1) switch to the snapshot
  * 2) rely on sd_create_branch to delete working VDI and
- * 3) create a new working VDI based on the speicified snapshot
+ * 3) create a new working VDI based on the specified snapshot
  */
 static int sd_snapshot_goto(BlockDriverState *bs, const char *snapshot_id)
 {
@@ -2379,11 +2445,12 @@ sd_co_get_block_status(BlockDriverState *bs, int64_t sector_num, int nb_sectors,
 {
     BDRVSheepdogState *s = bs->opaque;
     SheepdogInode *inode = &s->inode;
-    unsigned long start = sector_num * BDRV_SECTOR_SIZE / SD_DATA_OBJ_SIZE,
+    uint64_t offset = sector_num * BDRV_SECTOR_SIZE;
+    unsigned long start = offset / SD_DATA_OBJ_SIZE,
                   end = DIV_ROUND_UP((sector_num + nb_sectors) *
                                      BDRV_SECTOR_SIZE, SD_DATA_OBJ_SIZE);
     unsigned long idx;
-    int64_t ret = BDRV_BLOCK_DATA;
+    int64_t ret = BDRV_BLOCK_DATA | BDRV_BLOCK_OFFSET_VALID | offset;
 
     for (idx = start; idx < end; idx++) {
         if (inode->data_vdi_id[idx] == 0) {
@@ -2407,6 +2474,22 @@ sd_co_get_block_status(BlockDriverState *bs, int64_t sector_num, int nb_sectors,
     return ret;
 }
 
+static int64_t sd_get_allocated_file_size(BlockDriverState *bs)
+{
+    BDRVSheepdogState *s = bs->opaque;
+    SheepdogInode *inode = &s->inode;
+    unsigned long i, last = DIV_ROUND_UP(inode->vdi_size, SD_DATA_OBJ_SIZE);
+    uint64_t size = 0;
+
+    for (i = 0; i < last; i++) {
+        if (inode->data_vdi_id[i] == 0) {
+            continue;
+        }
+        size += SD_DATA_OBJ_SIZE;
+    }
+    return size;
+}
+
 static QEMUOptionParameter sd_create_options[] = {
     {
         .name = BLOCK_OPT_SIZE,
@@ -2423,6 +2506,11 @@ static QEMUOptionParameter sd_create_options[] = {
         .type = OPT_STRING,
         .help = "Preallocation mode (allowed values: off, full)"
     },
+    {
+        .name = BLOCK_OPT_REDUNDANCY,
+        .type = OPT_STRING,
+        .help = "Redundancy of the image"
+    },
     { NULL }
 };
 
@@ -2436,6 +2524,7 @@ static BlockDriver bdrv_sheepdog = {
     .bdrv_create    = sd_create,
     .bdrv_has_zero_init = bdrv_has_zero_init_1,
     .bdrv_getlength = sd_getlength,
+    .bdrv_get_allocated_file_size = sd_get_allocated_file_size,
     .bdrv_truncate  = sd_truncate,
 
     .bdrv_co_readv  = sd_co_readv,
@@ -2465,6 +2554,7 @@ static BlockDriver bdrv_sheepdog_tcp = {
     .bdrv_create    = sd_create,
     .bdrv_has_zero_init = bdrv_has_zero_init_1,
     .bdrv_getlength = sd_getlength,
+    .bdrv_get_allocated_file_size = sd_get_allocated_file_size,
     .bdrv_truncate  = sd_truncate,
 
     .bdrv_co_readv  = sd_co_readv,
@@ -2494,6 +2584,7 @@ static BlockDriver bdrv_sheepdog_unix = {
     .bdrv_create    = sd_create,
     .bdrv_has_zero_init = bdrv_has_zero_init_1,
     .bdrv_getlength = sd_getlength,
+    .bdrv_get_allocated_file_size = sd_get_allocated_file_size,
     .bdrv_truncate  = sd_truncate,
 
     .bdrv_co_readv  = sd_co_readv,

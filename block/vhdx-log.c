@@ -578,7 +578,7 @@ static int vhdx_validate_log_entry(BlockDriverState *bs, BDRVVHDXState *s,
     total_sectors = hdr.entry_length / VHDX_LOG_SECTOR_SIZE;
 
 
-    /* read_desc() will incrememnt the read idx */
+    /* read_desc() will increment the read idx */
     ret = vhdx_log_read_desc(bs, s, log, &desc_buffer);
     if (ret < 0) {
         goto free_and_exit;
@@ -706,7 +706,8 @@ exit:
  *
  * If read-only, we must replay the log in RAM (or refuse to open
  * a dirty VHDX file read-only) */
-int vhdx_parse_log(BlockDriverState *bs, BDRVVHDXState *s, bool *flushed)
+int vhdx_parse_log(BlockDriverState *bs, BDRVVHDXState *s, bool *flushed,
+                   Error **errp)
 {
     int ret = 0;
     VHDXHeader *hdr;
@@ -761,6 +762,16 @@ int vhdx_parse_log(BlockDriverState *bs, BDRVVHDXState *s, bool *flushed)
     }
 
     if (logs.valid) {
+        if (bs->read_only) {
+            ret = -EPERM;
+            error_setg_errno(errp, EPERM,
+                             "VHDX image file '%s' opened read-only, but "
+                             "contains a log that needs to be replayed.  To "
+                             "replay the log, execute:\n qemu-img check -r "
+                             "all '%s'",
+                             bs->filename, bs->filename);
+            goto exit;
+        }
         /* now flush the log */
         ret = vhdx_log_flush(bs, s, &logs);
         if (ret < 0) {
@@ -954,8 +965,8 @@ static int vhdx_log_write(BlockDriverState *bs, BDRVVHDXState *s,
     cpu_to_le32s((uint32_t *)(buffer + 4));
 
     /* now write to the log */
-    vhdx_log_write_sectors(bs, &s->log, &sectors_written, buffer,
-                           desc_sectors + sectors);
+    ret = vhdx_log_write_sectors(bs, &s->log, &sectors_written, buffer,
+                                 desc_sectors + sectors);
     if (ret < 0) {
         goto exit;
     }

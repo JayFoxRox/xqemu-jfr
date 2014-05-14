@@ -16,6 +16,8 @@ static Property usb_props[] = {
     DEFINE_PROP_STRING("serial", USBDevice, serial),
     DEFINE_PROP_BIT("full-path", USBDevice, flags,
                     USB_DEV_FLAG_FULL_PATH, true),
+    DEFINE_PROP_BIT("msos-desc", USBDevice, flags,
+                    USB_DEV_FLAG_MSOS_DESC_ENABLE, true),
     DEFINE_PROP_END_OF_LIST()
 };
 
@@ -200,6 +202,24 @@ void usb_device_ep_stopped(USBDevice *dev, USBEndpoint *ep)
     USBDeviceClass *klass = USB_DEVICE_GET_CLASS(dev);
     if (klass->ep_stopped) {
         klass->ep_stopped(dev, ep);
+    }
+}
+
+int usb_device_alloc_streams(USBDevice *dev, USBEndpoint **eps, int nr_eps,
+                             int streams)
+{
+    USBDeviceClass *klass = USB_DEVICE_GET_CLASS(dev);
+    if (klass->alloc_streams) {
+        return klass->alloc_streams(dev, eps, nr_eps, streams);
+    }
+    return 0;
+}
+
+void usb_device_free_streams(USBDevice *dev, USBEndpoint **eps, int nr_eps)
+{
+    USBDeviceClass *klass = USB_DEVICE_GET_CLASS(dev);
+    if (klass->free_streams) {
+        klass->free_streams(dev, eps, nr_eps);
     }
 }
 

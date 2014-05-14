@@ -91,6 +91,17 @@ typedef struct ARMCPU {
     /* GPIO outputs for generic timer */
     qemu_irq gt_timer_outputs[NUM_GTIMERS];
 
+    /* 'compatible' string for this CPU for Linux device trees */
+    const char *dtb_compatible;
+
+    /* Should CPU start in PSCI powered-off state? */
+    bool start_powered_off;
+
+    /* [QEMU_]KVM_ARM_TARGET_* constant for this CPU, or
+     * QEMU_KVM_ARM_TARGET_NONE if the kernel doesn't support this CPU type.
+     */
+    uint32_t kvm_target;
+
     /* The instance init functions for implementation-specific subclasses
      * set these fields to specify the implementation-dependent values of
      * various constant registers and reset values of non-constant
@@ -121,6 +132,16 @@ typedef struct ARMCPU {
     uint32_t id_isar3;
     uint32_t id_isar4;
     uint32_t id_isar5;
+    uint64_t id_aa64pfr0;
+    uint64_t id_aa64pfr1;
+    uint64_t id_aa64dfr0;
+    uint64_t id_aa64dfr1;
+    uint64_t id_aa64afr0;
+    uint64_t id_aa64afr1;
+    uint64_t id_aa64isar0;
+    uint64_t id_aa64isar1;
+    uint64_t id_aa64mmfr0;
+    uint64_t id_aa64mmfr1;
     uint32_t clidr;
     /* The elements of this array are the CCSIDR values for each cache,
      * in the order L1DCache, L1ICache, L2DCache, L2ICache, etc.
@@ -128,6 +149,7 @@ typedef struct ARMCPU {
     uint32_t ccsidr[16];
     uint32_t reset_cbar;
     uint32_t reset_auxcr;
+    bool reset_hivecs;
 } ARMCPU;
 
 #define TYPE_AARCH64_CPU "aarch64-cpu"

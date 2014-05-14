@@ -46,7 +46,6 @@ extern int madvise(caddr_t, size_t, int);
 #endif
 
 #include "qemu-common.h"
-#include "trace.h"
 #include "qemu/sockets.h"
 #include "monitor/monitor.h"
 
@@ -435,6 +434,24 @@ int socket_init(void)
     atexit(socket_cleanup);
 #endif
     return 0;
+}
+
+/* Ensure that glib is running in multi-threaded mode */
+static void __attribute__((constructor)) thread_init(void)
+{
+    if (!g_thread_supported()) {
+#if !GLIB_CHECK_VERSION(2, 31, 0)
+        /* Old versions of glib require explicit initialization.  Failure to do
+         * this results in the single-threaded code paths being taken inside
+         * glib.  For example, the g_slice allocator will not be thread-safe
+         * and cause crashes.
+         */
+        g_thread_init(NULL);
+#else
+        fprintf(stderr, "glib threading failed to initialize.\n");
+        exit(1);
+#endif
+    }
 }
 
 #ifndef CONFIG_IOVEC

@@ -35,6 +35,11 @@ STEXI
 @item commit
 @findex commit
 Commit changes to the disk images (if -snapshot is used) or backing files.
+If the backing file is smaller than the snapshot, then the backing file will be
+resized to be the same size as the snapshot.  If the snapshot is smaller than
+the backing file, the backing file will not be truncated.  If you want the
+backing file to match the size of the smaller snapshot, you can safely truncate
+it yourself once the commit operation successfully completes.
 ETEXI
 
     {
@@ -1190,7 +1195,7 @@ ETEXI
     {
         .name       = "host_net_add",
         .args_type  = "device:s,opts:s?",
-        .params     = "tap|user|socket|vde|dump [options]",
+        .params     = "tap|user|socket|vde|netmap|dump [options]",
         .help       = "add host VLAN client",
         .mhandler.cmd = net_host_device_add,
     },
@@ -1218,7 +1223,7 @@ ETEXI
     {
         .name       = "netdev_add",
         .args_type  = "netdev:O",
-        .params     = "[user|tap|socket|hubport],id=str[,prop=value][,...]",
+        .params     = "[user|tap|socket|hubport|netmap],id=str[,prop=value][,...]",
         .help       = "add host network device",
         .mhandler.cmd = hmp_netdev_add,
     },
@@ -1241,6 +1246,34 @@ STEXI
 @item netdev_del
 @findex netdev_del
 Remove host network device.
+ETEXI
+
+    {
+        .name       = "object_add",
+        .args_type  = "object:O",
+        .params     = "[qom-type=]type,id=str[,prop=value][,...]",
+        .help       = "create QOM object",
+        .mhandler.cmd = hmp_object_add,
+    },
+
+STEXI
+@item object_add
+@findex object_add
+Create QOM object.
+ETEXI
+
+    {
+        .name       = "object_del",
+        .args_type  = "id:s",
+        .params     = "id",
+        .help       = "destroy QOM object",
+        .mhandler.cmd = hmp_object_del,
+    },
+
+STEXI
+@item object_del
+@findex object_del
+Destroy QOM object.
 ETEXI
 
 #ifdef CONFIG_SLIRP
@@ -1617,6 +1650,19 @@ STEXI
 
 Executes a qemu-io command on the given block device.
 
+ETEXI
+
+    {
+        .name       = "cpu-add",
+        .args_type  = "id:i",
+        .params     = "id",
+        .help       = "add cpu",
+        .mhandler.cmd  = hmp_cpu_add,
+    },
+
+STEXI
+@item cpu-add @var{id}
+Add CPU with id @var{id}
 ETEXI
 
     {

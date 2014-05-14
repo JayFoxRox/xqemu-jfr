@@ -101,7 +101,6 @@ static void scsi_dma_restart_bh(void *opaque)
                 scsi_req_continue(req);
                 break;
             case SCSI_XFER_NONE:
-                assert(!req->sg);
                 scsi_req_dequeue(req);
                 scsi_req_enqueue(req);
                 break;
@@ -468,6 +467,8 @@ static int32_t scsi_target_send_command(SCSIRequest *req, uint8_t *buf)
             r->req.dev->sense_len = 0;
             r->req.dev->sense_is_ua = false;
         }
+        break;
+    case TEST_UNIT_READY:
         break;
     default:
         scsi_req_build_sense(req, SENSE_CODE(LUN_NOT_SUPPORTED));
@@ -886,7 +887,6 @@ static int scsi_req_length(SCSICommand *cmd, SCSIDevice *dev, uint8_t *buf)
     case RELEASE:
     case ERASE:
     case ALLOW_MEDIUM_REMOVAL:
-    case VERIFY_10:
     case SEEK_10:
     case SYNCHRONIZE_CACHE:
     case SYNCHRONIZE_CACHE_16:
@@ -902,6 +902,16 @@ static int scsi_req_length(SCSICommand *cmd, SCSIDevice *dev, uint8_t *buf)
     case PRE_FETCH_16:
     case ALLOW_OVERWRITE:
         cmd->xfer = 0;
+        break;
+    case VERIFY_10:
+    case VERIFY_12:
+    case VERIFY_16:
+        if ((buf[1] & 2) == 0) {
+            cmd->xfer = 0;
+        } else if ((buf[1] & 4) != 0) {
+            cmd->xfer = 1;
+        }
+        cmd->xfer *= dev->blocksize;
         break;
     case MODE_SENSE:
         break;
@@ -1100,6 +1110,9 @@ static void scsi_cmd_xfer_mode(SCSICommand *cmd)
     case WRITE_VERIFY_12:
     case WRITE_16:
     case WRITE_VERIFY_16:
+    case VERIFY_10:
+    case VERIFY_12:
+    case VERIFY_16:
     case COPY:
     case COPY_VERIFY:
     case COMPARE:
@@ -1293,6 +1306,11 @@ const struct SCSISense sense_code_ILLEGAL_REQ_REMOVAL_PREVENTED = {
     .key = ILLEGAL_REQUEST, .asc = 0x53, .ascq = 0x02
 };
 
+/* Illegal request, Invalid Transfer Tag */
+const struct SCSISense sense_code_INVALID_TAG = {
+    .key = ILLEGAL_REQUEST, .asc = 0x4b, .ascq = 0x01
+};
+
 /* Command aborted, I/O process terminated */
 const struct SCSISense sense_code_IO_ERROR = {
     .key = ABORTED_COMMAND, .asc = 0x00, .ascq = 0x06
@@ -1306,6 +1324,11 @@ const struct SCSISense sense_code_I_T_NEXUS_LOSS = {
 /* Command aborted, Logical Unit failure */
 const struct SCSISense sense_code_LUN_FAILURE = {
     .key = ABORTED_COMMAND, .asc = 0x3e, .ascq = 0x01
+};
+
+/* Command aborted, Overlapped Commands Attempted */
+const struct SCSISense sense_code_OVERLAPPED_COMMANDS = {
+    .key = ABORTED_COMMAND, .asc = 0x4e, .ascq = 0x00
 };
 
 /* Unit attention, Capacity data has changed */
@@ -1341,6 +1364,11 @@ const struct SCSISense sense_code_DEVICE_INTERNAL_RESET = {
 /* Data Protection, Write Protected */
 const struct SCSISense sense_code_WRITE_PROTECTED = {
     .key = DATA_PROTECT, .asc = 0x27, .ascq = 0x00
+};
+
+/* Data Protection, Space Allocation Failed Write Protect */
+const struct SCSISense sense_code_SPACE_ALLOC_FAILED = {
+    .key = DATA_PROTECT, .asc = 0x27, .ascq = 0x07
 };
 
 /*
@@ -1876,6 +1904,26 @@ static const VMStateInfo vmstate_info_scsi_requests = {
     .put  = put_scsi_requests,
 };
 
+static bool scsi_sense_state_needed(void *opaque)
+{
+    SCSIDevice *s = opaque;
+
+    return s->sense_len > SCSI_SENSE_BUF_SIZE_OLD;
+}
+
+static const VMStateDescription vmstate_scsi_sense_state = {
+    .name = "SCSIDevice/sense",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
+        VMSTATE_UINT8_SUB_ARRAY(sense, SCSIDevice,
+                                SCSI_SENSE_BUF_SIZE_OLD,
+                                SCSI_SENSE_BUF_SIZE - SCSI_SENSE_BUF_SIZE_OLD),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
 const VMStateDescription vmstate_scsi_device = {
     .name = "SCSIDevice",
     .version_id = 1,
@@ -1886,7 +1934,7 @@ const VMStateDescription vmstate_scsi_device = {
         VMSTATE_UINT8(unit_attention.asc, SCSIDevice),
         VMSTATE_UINT8(unit_attention.ascq, SCSIDevice),
         VMSTATE_BOOL(sense_is_ua, SCSIDevice),
-        VMSTATE_UINT8_ARRAY(sense, SCSIDevice, SCSI_SENSE_BUF_SIZE),
+        VMSTATE_UINT8_SUB_ARRAY(sense, SCSIDevice, 0, SCSI_SENSE_BUF_SIZE_OLD),
         VMSTATE_UINT32(sense_len, SCSIDevice),
         {
             .name         = "requests",
@@ -1898,6 +1946,14 @@ const VMStateDescription vmstate_scsi_device = {
             .offset       = 0,
         },
         VMSTATE_END_OF_LIST()
+    },
+    .subsections = (VMStateSubsection []) {
+        {
+            .vmsd = &vmstate_scsi_sense_state,
+            .needed = scsi_sense_state_needed,
+        }, {
+            /* empty */
+        }
     }
 };
 

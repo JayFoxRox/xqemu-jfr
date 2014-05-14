@@ -11,6 +11,8 @@
 # include <sys/endian.h>
 # include <sys/types.h>
 # include <machine/bswap.h>
+#elif defined(__FreeBSD__)
+# include <sys/endian.h>
 #elif defined(CONFIG_BYTESWAP_H)
 # include <byteswap.h>
 
@@ -228,7 +230,7 @@ static inline int ldsb_p(const void *ptr)
     return *(int8_t *)ptr;
 }
 
-static inline void stb_p(void *ptr, int v)
+static inline void stb_p(void *ptr, uint8_t v)
 {
     *(uint8_t *)ptr = v;
 }
@@ -300,12 +302,12 @@ static inline uint64_t ldq_le_p(const void *ptr)
     return le_bswap(ldq_p(ptr), 64);
 }
 
-static inline void stw_le_p(void *ptr, int v)
+static inline void stw_le_p(void *ptr, uint16_t v)
 {
     stw_p(ptr, le_bswap(v, 16));
 }
 
-static inline void stl_le_p(void *ptr, int v)
+static inline void stl_le_p(void *ptr, uint32_t v)
 {
     stl_p(ptr, le_bswap(v, 32));
 }
@@ -365,12 +367,12 @@ static inline uint64_t ldq_be_p(const void *ptr)
     return be_bswap(ldq_p(ptr), 64);
 }
 
-static inline void stw_be_p(void *ptr, int v)
+static inline void stw_be_p(void *ptr, uint16_t v)
 {
     stw_p(ptr, be_bswap(v, 16));
 }
 
-static inline void stl_be_p(void *ptr, int v)
+static inline void stl_be_p(void *ptr, uint32_t v)
 {
     stl_p(ptr, be_bswap(v, 32));
 }

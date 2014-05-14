@@ -61,6 +61,9 @@ elif [ "$IMGPROTO" = "nbd" ]; then
 elif [ "$IMGPROTO" = "ssh" ]; then
     TEST_IMG_FILE=$TEST_DIR/t.$IMGFMT
     TEST_IMG="ssh://127.0.0.1$TEST_IMG_FILE"
+elif [ "$IMGPROTO" = "nfs" ]; then
+    TEST_DIR="nfs://127.0.0.1/$TEST_DIR"
+    TEST_IMG=$TEST_DIR/t.$IMGFMT
 else
     TEST_IMG=$IMGPROTO:$TEST_DIR/t.$IMGFMT
 fi
@@ -170,6 +173,17 @@ _make_test_img()
     fi
 }
 
+_rm_test_img()
+{
+    local img=$1
+    if [ "$IMGFMT" = "vmdk" ]; then
+        # Remove all the extents for vmdk
+        $QEMU_IMG info $img 2>/dev/null | grep 'filename:' | cut -f 2 -d: \
+            | xargs -I {} rm -f "{}"
+    fi
+    rm -f $img
+}
+
 _cleanup_test_img()
 {
     case "$IMGPROTO" in
@@ -179,9 +193,9 @@ _cleanup_test_img()
             rm -f "$TEST_IMG_FILE"
             ;;
         file)
-            rm -f "$TEST_DIR/t.$IMGFMT"
-            rm -f "$TEST_DIR/t.$IMGFMT.orig"
-            rm -f "$TEST_DIR/t.$IMGFMT.base"
+            _rm_test_img "$TEST_DIR/t.$IMGFMT"
+            _rm_test_img "$TEST_DIR/t.$IMGFMT.orig"
+            _rm_test_img "$TEST_DIR/t.$IMGFMT.base"
             if [ -n "$SAMPLE_IMG_FILE" ]
             then
                 rm -f "$TEST_DIR/$SAMPLE_IMG_FILE"
@@ -189,7 +203,7 @@ _cleanup_test_img()
             ;;
 
         rbd)
-            rbd rm "$TEST_DIR/t.$IMGFMT" > /dev/null
+            rbd --no-progress rm "$TEST_DIR/t.$IMGFMT" > /dev/null
             ;;
 
         sheepdog)
@@ -350,6 +364,9 @@ _fail()
 #
 _supported_fmt()
 {
+    # "generic" is suitable for most image formats. For some formats it doesn't
+    # work, however (most notably read-only formats), so they can opt out by
+    # setting IMGFMT_GENERIC to false.
     for f; do
         if [ "$f" = "$IMGFMT" -o "$f" = "generic" -a "$IMGFMT_GENERIC" = "true" ]; then
             return
@@ -387,17 +404,33 @@ _supported_os()
     _notrun "not suitable for this OS: $HOSTOS"
 }
 
-_unsupported_qemu_io_options()
+_supported_cache_modes()
+{
+    for mode; do
+        if [ "$mode" = "$CACHEMODE" ]; then
+            return
+        fi
+    done
+    _notrun "not suitable for cache mode: $CACHEMODE"
+}
+
+_default_cache_mode()
+{
+    if $CACHEMODE_IS_DEFAULT; then
+        CACHEMODE="$1"
+        QEMU_IO="$QEMU_IO --cache $1"
+        return
+    fi
+}
+
+_unsupported_imgopts()
 {
     for bad_opt
     do
-        for opt in $QEMU_IO_OPTIONS
-        do
-            if [ "$bad_opt" = "$opt" ]
-            then
-                _notrun "not suitable for qemu-io option: $bad_opt"
-            fi
-        done
+        if echo "$IMGOPTS" | grep -q 2>/dev/null "$bad_opt"
+        then
+            _notrun "not suitable for image option: $bad_opt"
+        fi
     done
 }
 
@@ -405,7 +438,8 @@ _unsupported_qemu_io_options()
 #
 _require_command()
 {
-    [ -x "$1" ] || _notrun "$1 utility required, skipped this test"
+    eval c=\$$1
+    [ -x "$c" ] || _notrun "$1 utility required, skipped this test"
 }
 
 _full_imgfmt_details()

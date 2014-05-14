@@ -38,6 +38,19 @@
 #define QCOW_CRYPT_AES  1
 
 #define QCOW_MAX_CRYPT_CLUSTERS 32
+#define QCOW_MAX_SNAPSHOTS 65536
+
+/* 8 MB refcount table is enough for 2 PB images at 64k cluster size
+ * (128 GB for 512 byte clusters, 2 EB for 2 MB clusters) */
+#define QCOW_MAX_REFTABLE_SIZE 0x800000
+
+/* 32 MB L1 table is enough for 2 PB images at 64k cluster size
+ * (128 GB for 512 byte clusters, 2 EB for 2 MB clusters) */
+#define QCOW_MAX_L1_SIZE 0x2000000
+
+/* Allow for an average of 1k per snapshot table entry, should be plenty of
+ * space for snapshot names and IDs */
+#define QCOW_MAX_SNAPSHOTS_SIZE (1024 * QCOW_MAX_SNAPSHOTS)
 
 /* indicate that the refcount of the referenced cluster is exactly one. */
 #define QCOW_OFLAG_COPIED     (1ULL << 63)
@@ -96,6 +109,32 @@ typedef struct QCowHeader {
     uint32_t refcount_order;
     uint32_t header_length;
 } QEMU_PACKED QCowHeader;
+
+typedef struct QEMU_PACKED QCowSnapshotHeader {
+    /* header is 8 byte aligned */
+    uint64_t l1_table_offset;
+
+    uint32_t l1_size;
+    uint16_t id_str_size;
+    uint16_t name_size;
+
+    uint32_t date_sec;
+    uint32_t date_nsec;
+
+    uint64_t vm_clock_nsec;
+
+    uint32_t vm_state_size;
+    uint32_t extra_data_size; /* for extension */
+    /* extra data follows */
+    /* id_str follows */
+    /* name follows  */
+} QCowSnapshotHeader;
+
+typedef struct QEMU_PACKED QCowSnapshotExtraData {
+    uint64_t vm_state_size_large;
+    uint64_t disk_size;
+} QCowSnapshotExtraData;
+
 
 typedef struct QCowSnapshot {
     uint64_t l1_table_offset;
@@ -191,8 +230,8 @@ typedef struct BDRVQcowState {
     uint64_t *refcount_table;
     uint64_t refcount_table_offset;
     uint32_t refcount_table_size;
-    int64_t free_cluster_index;
-    int64_t free_byte_offset;
+    uint64_t free_cluster_index;
+    uint64_t free_byte_offset;
 
     CoMutex lock;
 
@@ -202,7 +241,7 @@ typedef struct BDRVQcowState {
     AES_KEY aes_decrypt_key;
     uint64_t snapshots_offset;
     int snapshots_size;
-    int nb_snapshots;
+    unsigned int nb_snapshots;
     QCowSnapshot *snapshots;
 
     int flags;
@@ -340,11 +379,11 @@ typedef enum QCow2MetadataOverlap {
 #define QCOW2_OL_ALL \
     (QCOW2_OL_CACHED | QCOW2_OL_INACTIVE_L2)
 
-#define L1E_OFFSET_MASK 0x00ffffffffffff00ULL
-#define L2E_OFFSET_MASK 0x00ffffffffffff00ULL
+#define L1E_OFFSET_MASK 0x00fffffffffffe00ULL
+#define L2E_OFFSET_MASK 0x00fffffffffffe00ULL
 #define L2E_COMPRESSED_OFFSET_SIZE_MASK 0x3fffffffffffffffULL
 
-#define REFT_OFFSET_MASK 0xffffffffffffff00ULL
+#define REFT_OFFSET_MASK 0xfffffffffffffe00ULL
 
 static inline int64_t start_of_cluster(BDRVQcowState *s, int64_t offset)
 {
@@ -381,6 +420,11 @@ static inline int64_t align_offset(int64_t offset, int n)
 static inline int64_t qcow2_vm_state_offset(BDRVQcowState *s)
 {
     return (int64_t)s->l1_vm_state_index << (s->cluster_bits + s->l2_bits);
+}
+
+static inline uint64_t qcow2_max_refcount_clusters(BDRVQcowState *s)
+{
+    return QCOW_MAX_REFTABLE_SIZE >> s->cluster_bits;
 }
 
 static inline int qcow2_get_cluster_type(uint64_t l2_entry)
@@ -431,7 +475,7 @@ void qcow2_refcount_close(BlockDriverState *bs);
 int qcow2_update_cluster_refcount(BlockDriverState *bs, int64_t cluster_index,
                                   int addend, enum qcow2_discard_type type);
 
-int64_t qcow2_alloc_clusters(BlockDriverState *bs, int64_t size);
+int64_t qcow2_alloc_clusters(BlockDriverState *bs, uint64_t size);
 int qcow2_alloc_clusters_at(BlockDriverState *bs, uint64_t offset,
     int nb_clusters);
 int64_t qcow2_alloc_bytes(BlockDriverState *bs, int size);
@@ -468,7 +512,7 @@ void qcow2_encrypt_sectors(BDRVQcowState *s, int64_t sector_num,
 int qcow2_get_cluster_offset(BlockDriverState *bs, uint64_t offset,
     int *num, uint64_t *cluster_offset);
 int qcow2_alloc_cluster_offset(BlockDriverState *bs, uint64_t offset,
-    int n_start, int n_end, int *num, uint64_t *host_offset, QCowL2Meta **m);
+    int *num, uint64_t *host_offset, QCowL2Meta **m);
 uint64_t qcow2_alloc_compressed_cluster_offset(BlockDriverState *bs,
                                          uint64_t offset,
                                          int compressed_size);
@@ -488,7 +532,10 @@ int qcow2_snapshot_delete(BlockDriverState *bs,
                           const char *name,
                           Error **errp);
 int qcow2_snapshot_list(BlockDriverState *bs, QEMUSnapshotInfo **psn_tab);
-int qcow2_snapshot_load_tmp(BlockDriverState *bs, const char *snapshot_name);
+int qcow2_snapshot_load_tmp(BlockDriverState *bs,
+                            const char *snapshot_id,
+                            const char *name,
+                            Error **errp);
 
 void qcow2_free_snapshots(BlockDriverState *bs);
 int qcow2_read_snapshots(BlockDriverState *bs);

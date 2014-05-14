@@ -1216,20 +1216,28 @@ static void gen_store_fpr32(TCGv_i32 t, int reg)
     tcg_temp_free_i64(t64);
 }
 
-static void gen_load_fpr32h(TCGv_i32 t, int reg)
+static void gen_load_fpr32h(DisasContext *ctx, TCGv_i32 t, int reg)
 {
-    TCGv_i64 t64 = tcg_temp_new_i64();
-    tcg_gen_shri_i64(t64, fpu_f64[reg], 32);
-    tcg_gen_trunc_i64_i32(t, t64);
-    tcg_temp_free_i64(t64);
+    if (ctx->hflags & MIPS_HFLAG_F64) {
+        TCGv_i64 t64 = tcg_temp_new_i64();
+        tcg_gen_shri_i64(t64, fpu_f64[reg], 32);
+        tcg_gen_trunc_i64_i32(t, t64);
+        tcg_temp_free_i64(t64);
+    } else {
+        gen_load_fpr32(t, reg | 1);
+    }
 }
 
-static void gen_store_fpr32h(TCGv_i32 t, int reg)
+static void gen_store_fpr32h(DisasContext *ctx, TCGv_i32 t, int reg)
 {
-    TCGv_i64 t64 = tcg_temp_new_i64();
-    tcg_gen_extu_i32_i64(t64, t);
-    tcg_gen_deposit_i64(fpu_f64[reg], fpu_f64[reg], t64, 32, 32);
-    tcg_temp_free_i64(t64);
+    if (ctx->hflags & MIPS_HFLAG_F64) {
+        TCGv_i64 t64 = tcg_temp_new_i64();
+        tcg_gen_extu_i32_i64(t64, t);
+        tcg_gen_deposit_i64(fpu_f64[reg], fpu_f64[reg], t64, 32, 32);
+        tcg_temp_free_i64(t64);
+    } else {
+        gen_store_fpr32(t, reg | 1);
+    }
 }
 
 static void gen_load_fpr64(DisasContext *ctx, TCGv_i64 t, int reg)
@@ -1606,12 +1614,12 @@ static void gen_ld(DisasContext *ctx, uint32_t opc,
     switch (opc) {
 #if defined(TARGET_MIPS64)
     case OPC_LWU:
-        tcg_gen_qemu_ld32u(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_TEUL);
         gen_store_gpr(t0, rt);
         opn = "lwu";
         break;
     case OPC_LD:
-        tcg_gen_qemu_ld64(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_TEQ);
         gen_store_gpr(t0, rt);
         opn = "ld";
         break;
@@ -1629,7 +1637,7 @@ static void gen_ld(DisasContext *ctx, uint32_t opc,
 #endif
         tcg_gen_shli_tl(t1, t1, 3);
         tcg_gen_andi_tl(t0, t0, ~7);
-        tcg_gen_qemu_ld64(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_TEQ);
         tcg_gen_shl_tl(t0, t0, t1);
         tcg_gen_xori_tl(t1, t1, 63);
         t2 = tcg_const_tl(0x7fffffffffffffffull);
@@ -1650,7 +1658,7 @@ static void gen_ld(DisasContext *ctx, uint32_t opc,
 #endif
         tcg_gen_shli_tl(t1, t1, 3);
         tcg_gen_andi_tl(t0, t0, ~7);
-        tcg_gen_qemu_ld64(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_TEQ);
         tcg_gen_shr_tl(t0, t0, t1);
         tcg_gen_xori_tl(t1, t1, 63);
         t2 = tcg_const_tl(0xfffffffffffffffeull);
@@ -1667,7 +1675,7 @@ static void gen_ld(DisasContext *ctx, uint32_t opc,
         t1 = tcg_const_tl(pc_relative_pc(ctx));
         gen_op_addr_add(ctx, t0, t0, t1);
         tcg_temp_free(t1);
-        tcg_gen_qemu_ld64(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_TEQ);
         gen_store_gpr(t0, rt);
         opn = "ldpc";
         break;
@@ -1676,32 +1684,32 @@ static void gen_ld(DisasContext *ctx, uint32_t opc,
         t1 = tcg_const_tl(pc_relative_pc(ctx));
         gen_op_addr_add(ctx, t0, t0, t1);
         tcg_temp_free(t1);
-        tcg_gen_qemu_ld32s(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_TESL);
         gen_store_gpr(t0, rt);
         opn = "lwpc";
         break;
     case OPC_LW:
-        tcg_gen_qemu_ld32s(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_TESL);
         gen_store_gpr(t0, rt);
         opn = "lw";
         break;
     case OPC_LH:
-        tcg_gen_qemu_ld16s(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_TESW);
         gen_store_gpr(t0, rt);
         opn = "lh";
         break;
     case OPC_LHU:
-        tcg_gen_qemu_ld16u(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_TEUW);
         gen_store_gpr(t0, rt);
         opn = "lhu";
         break;
     case OPC_LB:
-        tcg_gen_qemu_ld8s(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_SB);
         gen_store_gpr(t0, rt);
         opn = "lb";
         break;
     case OPC_LBU:
-        tcg_gen_qemu_ld8u(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_UB);
         gen_store_gpr(t0, rt);
         opn = "lbu";
         break;
@@ -1713,7 +1721,7 @@ static void gen_ld(DisasContext *ctx, uint32_t opc,
 #endif
         tcg_gen_shli_tl(t1, t1, 3);
         tcg_gen_andi_tl(t0, t0, ~3);
-        tcg_gen_qemu_ld32u(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_TEUL);
         tcg_gen_shl_tl(t0, t0, t1);
         tcg_gen_xori_tl(t1, t1, 31);
         t2 = tcg_const_tl(0x7fffffffull);
@@ -1735,7 +1743,7 @@ static void gen_ld(DisasContext *ctx, uint32_t opc,
 #endif
         tcg_gen_shli_tl(t1, t1, 3);
         tcg_gen_andi_tl(t0, t0, ~3);
-        tcg_gen_qemu_ld32u(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_TEUL);
         tcg_gen_shr_tl(t0, t0, t1);
         tcg_gen_xori_tl(t1, t1, 31);
         t2 = tcg_const_tl(0xfffffffeull);
@@ -1774,7 +1782,7 @@ static void gen_st (DisasContext *ctx, uint32_t opc, int rt,
     switch (opc) {
 #if defined(TARGET_MIPS64)
     case OPC_SD:
-        tcg_gen_qemu_st64(t1, t0, ctx->mem_idx);
+        tcg_gen_qemu_st_tl(t1, t0, ctx->mem_idx, MO_TEQ);
         opn = "sd";
         break;
     case OPC_SDL:
@@ -1789,15 +1797,15 @@ static void gen_st (DisasContext *ctx, uint32_t opc, int rt,
         break;
 #endif
     case OPC_SW:
-        tcg_gen_qemu_st32(t1, t0, ctx->mem_idx);
+        tcg_gen_qemu_st_tl(t1, t0, ctx->mem_idx, MO_TEUL);
         opn = "sw";
         break;
     case OPC_SH:
-        tcg_gen_qemu_st16(t1, t0, ctx->mem_idx);
+        tcg_gen_qemu_st_tl(t1, t0, ctx->mem_idx, MO_TEUW);
         opn = "sh";
         break;
     case OPC_SB:
-        tcg_gen_qemu_st8(t1, t0, ctx->mem_idx);
+        tcg_gen_qemu_st_tl(t1, t0, ctx->mem_idx, MO_8);
         opn = "sb";
         break;
     case OPC_SWL:
@@ -1868,9 +1876,7 @@ static void gen_flt_ldst (DisasContext *ctx, uint32_t opc, int ft,
     case OPC_LWC1:
         {
             TCGv_i32 fp0 = tcg_temp_new_i32();
-
-            tcg_gen_qemu_ld32s(t0, t0, ctx->mem_idx);
-            tcg_gen_trunc_tl_i32(fp0, t0);
+            tcg_gen_qemu_ld_i32(fp0, t0, ctx->mem_idx, MO_TESL);
             gen_store_fpr32(fp0, ft);
             tcg_temp_free_i32(fp0);
         }
@@ -1879,12 +1885,8 @@ static void gen_flt_ldst (DisasContext *ctx, uint32_t opc, int ft,
     case OPC_SWC1:
         {
             TCGv_i32 fp0 = tcg_temp_new_i32();
-            TCGv t1 = tcg_temp_new();
-
             gen_load_fpr32(fp0, ft);
-            tcg_gen_extu_i32_tl(t1, fp0);
-            tcg_gen_qemu_st32(t1, t0, ctx->mem_idx);
-            tcg_temp_free(t1);
+            tcg_gen_qemu_st_i32(fp0, t0, ctx->mem_idx, MO_TEUL);
             tcg_temp_free_i32(fp0);
         }
         opn = "swc1";
@@ -1892,8 +1894,7 @@ static void gen_flt_ldst (DisasContext *ctx, uint32_t opc, int ft,
     case OPC_LDC1:
         {
             TCGv_i64 fp0 = tcg_temp_new_i64();
-
-            tcg_gen_qemu_ld64(fp0, t0, ctx->mem_idx);
+            tcg_gen_qemu_ld_i64(fp0, t0, ctx->mem_idx, MO_TEQ);
             gen_store_fpr64(ctx, fp0, ft);
             tcg_temp_free_i64(fp0);
         }
@@ -1902,9 +1903,8 @@ static void gen_flt_ldst (DisasContext *ctx, uint32_t opc, int ft,
     case OPC_SDC1:
         {
             TCGv_i64 fp0 = tcg_temp_new_i64();
-
             gen_load_fpr64(ctx, fp0, ft);
-            tcg_gen_qemu_st64(fp0, t0, ctx->mem_idx);
+            tcg_gen_qemu_st_i64(fp0, t0, ctx->mem_idx, MO_TEQ);
             tcg_temp_free_i64(fp0);
         }
         opn = "sdc1";
@@ -4413,7 +4413,14 @@ static void gen_mfc0(DisasContext *ctx, TCGv arg, int reg, int sel)
             gen_mfc0_load32(arg, offsetof(CPUMIPSState, CP0_Config3));
             rn = "Config3";
             break;
-        /* 4,5 are reserved */
+        case 4:
+            gen_mfc0_load32(arg, offsetof(CPUMIPSState, CP0_Config4));
+            rn = "Config4";
+            break;
+        case 5:
+            gen_mfc0_load32(arg, offsetof(CPUMIPSState, CP0_Config5));
+            rn = "Config5";
+            break;
         /* 6,7 are implementation dependent */
         case 6:
             gen_mfc0_load32(arg, offsetof(CPUMIPSState, CP0_Config6));
@@ -4990,7 +4997,17 @@ static void gen_mtc0(DisasContext *ctx, TCGv arg, int reg, int sel)
             /* ignored, read only */
             rn = "Config3";
             break;
-        /* 4,5 are reserved */
+        case 4:
+            gen_helper_mtc0_config4(cpu_env, arg);
+            rn = "Config4";
+            ctx->bstate = BS_STOP;
+            break;
+        case 5:
+            gen_helper_mtc0_config5(cpu_env, arg);
+            rn = "Config5";
+            /* Stop translation as we may have switched the execution mode */
+            ctx->bstate = BS_STOP;
+            break;
         /* 6,7 are implementation dependent */
         case 6:
             /* ignored */
@@ -6604,7 +6621,7 @@ static void gen_mftr(CPUMIPSState *env, DisasContext *ctx, int rt, int rd,
         } else {
             TCGv_i32 fp0 = tcg_temp_new_i32();
 
-            gen_load_fpr32h(fp0, rt);
+            gen_load_fpr32h(ctx, fp0, rt);
             tcg_gen_ext_i32_tl(t0, fp0);
             tcg_temp_free_i32(fp0);
         }
@@ -6803,13 +6820,18 @@ static void gen_mttr(CPUMIPSState *env, DisasContext *ctx, int rd, int rt,
             TCGv_i32 fp0 = tcg_temp_new_i32();
 
             tcg_gen_trunc_tl_i32(fp0, t0);
-            gen_store_fpr32h(fp0, rd);
+            gen_store_fpr32h(ctx, fp0, rd);
             tcg_temp_free_i32(fp0);
         }
         break;
     case 3:
         /* XXX: For now we support only a single FPU context. */
-        gen_helper_0e1i(ctc1, t0, rd);
+        {
+            TCGv_i32 fs_tmp = tcg_const_i32(rd);
+
+            gen_helper_0e2i(ctc1, t0, fs_tmp, rt);
+            tcg_temp_free_i32(fs_tmp);
+        }
         break;
     /* COP2: Not implemented. */
     case 4:
@@ -7245,7 +7267,12 @@ static void gen_cp1 (DisasContext *ctx, uint32_t opc, int rt, int fs)
         break;
     case OPC_CTC1:
         gen_load_gpr(t0, rt);
-        gen_helper_0e1i(ctc1, t0, fs);
+        {
+            TCGv_i32 fs_tmp = tcg_const_i32(fs);
+
+            gen_helper_0e2i(ctc1, t0, fs_tmp, rt);
+            tcg_temp_free_i32(fs_tmp);
+        }
         opn = "ctc1";
         break;
 #if defined(TARGET_MIPS64)
@@ -7264,7 +7291,7 @@ static void gen_cp1 (DisasContext *ctx, uint32_t opc, int rt, int fs)
         {
             TCGv_i32 fp0 = tcg_temp_new_i32();
 
-            gen_load_fpr32h(fp0, fs);
+            gen_load_fpr32h(ctx, fp0, fs);
             tcg_gen_ext_i32_tl(t0, fp0);
             tcg_temp_free_i32(fp0);
         }
@@ -7277,7 +7304,7 @@ static void gen_cp1 (DisasContext *ctx, uint32_t opc, int rt, int fs)
             TCGv_i32 fp0 = tcg_temp_new_i32();
 
             tcg_gen_trunc_tl_i32(fp0, t0);
-            gen_store_fpr32h(fp0, fs);
+            gen_store_fpr32h(ctx, fp0, fs);
             tcg_temp_free_i32(fp0);
         }
         opn = "mthc1";
@@ -7364,7 +7391,8 @@ static inline void gen_movcf_d (DisasContext *ctx, int fs, int fd, int cc, int t
     gen_set_label(l1);
 }
 
-static inline void gen_movcf_ps (int fs, int fd, int cc, int tf)
+static inline void gen_movcf_ps(DisasContext *ctx, int fs, int fd,
+                                int cc, int tf)
 {
     int cond;
     TCGv_i32 t0 = tcg_temp_new_i32();
@@ -7384,8 +7412,8 @@ static inline void gen_movcf_ps (int fs, int fd, int cc, int tf)
 
     tcg_gen_andi_i32(t0, fpu_fcr31, 1 << get_fp_bit(cc+1));
     tcg_gen_brcondi_i32(cond, t0, 0, l2);
-    gen_load_fpr32h(t0, fs);
-    gen_store_fpr32h(t0, fd);
+    gen_load_fpr32h(ctx, t0, fs);
+    gen_store_fpr32h(ctx, t0, fd);
     tcg_temp_free_i32(t0);
     gen_set_label(l2);
 }
@@ -8370,7 +8398,7 @@ static void gen_farith (DisasContext *ctx, enum fopcode op1,
         break;
     case OPC_MOVCF_PS:
         check_cp1_64bitmode(ctx);
-        gen_movcf_ps(fs, fd, (ft >> 2) & 0x7, ft & 0x1);
+        gen_movcf_ps(ctx, fs, fd, (ft >> 2) & 0x7, ft & 0x1);
         opn = "movcf.ps";
         break;
     case OPC_MOVZ_PS:
@@ -8495,7 +8523,7 @@ static void gen_farith (DisasContext *ctx, enum fopcode op1,
         {
             TCGv_i32 fp0 = tcg_temp_new_i32();
 
-            gen_load_fpr32h(fp0, fs);
+            gen_load_fpr32h(ctx, fp0, fs);
             gen_helper_float_cvts_pu(fp0, cpu_env, fp0);
             gen_store_fpr32(fp0, fd);
             tcg_temp_free_i32(fp0);
@@ -8534,7 +8562,7 @@ static void gen_farith (DisasContext *ctx, enum fopcode op1,
 
             gen_load_fpr32(fp0, fs);
             gen_load_fpr32(fp1, ft);
-            gen_store_fpr32h(fp0, fd);
+            gen_store_fpr32h(ctx, fp0, fd);
             gen_store_fpr32(fp1, fd);
             tcg_temp_free_i32(fp0);
             tcg_temp_free_i32(fp1);
@@ -8548,9 +8576,9 @@ static void gen_farith (DisasContext *ctx, enum fopcode op1,
             TCGv_i32 fp1 = tcg_temp_new_i32();
 
             gen_load_fpr32(fp0, fs);
-            gen_load_fpr32h(fp1, ft);
+            gen_load_fpr32h(ctx, fp1, ft);
             gen_store_fpr32(fp1, fd);
-            gen_store_fpr32h(fp0, fd);
+            gen_store_fpr32h(ctx, fp0, fd);
             tcg_temp_free_i32(fp0);
             tcg_temp_free_i32(fp1);
         }
@@ -8562,10 +8590,10 @@ static void gen_farith (DisasContext *ctx, enum fopcode op1,
             TCGv_i32 fp0 = tcg_temp_new_i32();
             TCGv_i32 fp1 = tcg_temp_new_i32();
 
-            gen_load_fpr32h(fp0, fs);
+            gen_load_fpr32h(ctx, fp0, fs);
             gen_load_fpr32(fp1, ft);
             gen_store_fpr32(fp1, fd);
-            gen_store_fpr32h(fp0, fd);
+            gen_store_fpr32h(ctx, fp0, fd);
             tcg_temp_free_i32(fp0);
             tcg_temp_free_i32(fp1);
         }
@@ -8577,10 +8605,10 @@ static void gen_farith (DisasContext *ctx, enum fopcode op1,
             TCGv_i32 fp0 = tcg_temp_new_i32();
             TCGv_i32 fp1 = tcg_temp_new_i32();
 
-            gen_load_fpr32h(fp0, fs);
-            gen_load_fpr32h(fp1, ft);
+            gen_load_fpr32h(ctx, fp0, fs);
+            gen_load_fpr32h(ctx, fp1, ft);
             gen_store_fpr32(fp1, fd);
-            gen_store_fpr32h(fp0, fd);
+            gen_store_fpr32h(ctx, fp0, fd);
             tcg_temp_free_i32(fp0);
             tcg_temp_free_i32(fp1);
         }
@@ -8652,7 +8680,7 @@ static void gen_flt3_ldst (DisasContext *ctx, uint32_t opc,
         {
             TCGv_i32 fp0 = tcg_temp_new_i32();
 
-            tcg_gen_qemu_ld32s(t0, t0, ctx->mem_idx);
+            tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_TESL);
             tcg_gen_trunc_tl_i32(fp0, t0);
             gen_store_fpr32(fp0, fd);
             tcg_temp_free_i32(fp0);
@@ -8664,8 +8692,7 @@ static void gen_flt3_ldst (DisasContext *ctx, uint32_t opc,
         check_cp1_registers(ctx, fd);
         {
             TCGv_i64 fp0 = tcg_temp_new_i64();
-
-            tcg_gen_qemu_ld64(fp0, t0, ctx->mem_idx);
+            tcg_gen_qemu_ld_i64(fp0, t0, ctx->mem_idx, MO_TEQ);
             gen_store_fpr64(ctx, fp0, fd);
             tcg_temp_free_i64(fp0);
         }
@@ -8677,7 +8704,7 @@ static void gen_flt3_ldst (DisasContext *ctx, uint32_t opc,
         {
             TCGv_i64 fp0 = tcg_temp_new_i64();
 
-            tcg_gen_qemu_ld64(fp0, t0, ctx->mem_idx);
+            tcg_gen_qemu_ld_i64(fp0, t0, ctx->mem_idx, MO_TEQ);
             gen_store_fpr64(ctx, fp0, fd);
             tcg_temp_free_i64(fp0);
         }
@@ -8687,13 +8714,9 @@ static void gen_flt3_ldst (DisasContext *ctx, uint32_t opc,
         check_cop1x(ctx);
         {
             TCGv_i32 fp0 = tcg_temp_new_i32();
-            TCGv t1 = tcg_temp_new();
-
             gen_load_fpr32(fp0, fs);
-            tcg_gen_extu_i32_tl(t1, fp0);
-            tcg_gen_qemu_st32(t1, t0, ctx->mem_idx);
+            tcg_gen_qemu_st_i32(fp0, t0, ctx->mem_idx, MO_TEUL);
             tcg_temp_free_i32(fp0);
-            tcg_temp_free(t1);
         }
         opn = "swxc1";
         store = 1;
@@ -8703,9 +8726,8 @@ static void gen_flt3_ldst (DisasContext *ctx, uint32_t opc,
         check_cp1_registers(ctx, fs);
         {
             TCGv_i64 fp0 = tcg_temp_new_i64();
-
             gen_load_fpr64(ctx, fp0, fs);
-            tcg_gen_qemu_st64(fp0, t0, ctx->mem_idx);
+            tcg_gen_qemu_st_i64(fp0, t0, ctx->mem_idx, MO_TEQ);
             tcg_temp_free_i64(fp0);
         }
         opn = "sdxc1";
@@ -8716,9 +8738,8 @@ static void gen_flt3_ldst (DisasContext *ctx, uint32_t opc,
         tcg_gen_andi_tl(t0, t0, ~0x7);
         {
             TCGv_i64 fp0 = tcg_temp_new_i64();
-
             gen_load_fpr64(ctx, fp0, fs);
-            tcg_gen_qemu_st64(fp0, t0, ctx->mem_idx);
+            tcg_gen_qemu_st_i64(fp0, t0, ctx->mem_idx, MO_TEQ);
             tcg_temp_free_i64(fp0);
         }
         opn = "suxc1";
@@ -8751,23 +8772,23 @@ static void gen_flt3_arith (DisasContext *ctx, uint32_t opc,
 
             tcg_gen_brcondi_tl(TCG_COND_NE, t0, 0, l1);
             gen_load_fpr32(fp, fs);
-            gen_load_fpr32h(fph, fs);
+            gen_load_fpr32h(ctx, fph, fs);
             gen_store_fpr32(fp, fd);
-            gen_store_fpr32h(fph, fd);
+            gen_store_fpr32h(ctx, fph, fd);
             tcg_gen_br(l2);
             gen_set_label(l1);
             tcg_gen_brcondi_tl(TCG_COND_NE, t0, 4, l2);
             tcg_temp_free(t0);
 #ifdef TARGET_WORDS_BIGENDIAN
             gen_load_fpr32(fp, fs);
-            gen_load_fpr32h(fph, ft);
-            gen_store_fpr32h(fp, fd);
+            gen_load_fpr32h(ctx, fph, ft);
+            gen_store_fpr32h(ctx, fp, fd);
             gen_store_fpr32(fph, fd);
 #else
-            gen_load_fpr32h(fph, fs);
+            gen_load_fpr32h(ctx, fph, fs);
             gen_load_fpr32(fp, ft);
             gen_store_fpr32(fph, fd);
-            gen_store_fpr32h(fp, fd);
+            gen_store_fpr32h(ctx, fp, fd);
 #endif
             gen_set_label(l2);
             tcg_temp_free_i32(fp);
@@ -9286,30 +9307,30 @@ static void gen_mips16_save (DisasContext *ctx,
     case 4:
         gen_base_offset_addr(ctx, t0, 29, 12);
         gen_load_gpr(t1, 7);
-        tcg_gen_qemu_st32(t1, t0, ctx->mem_idx);
+        tcg_gen_qemu_st_tl(t1, t0, ctx->mem_idx, MO_TEUL);
         /* Fall through */
     case 3:
         gen_base_offset_addr(ctx, t0, 29, 8);
         gen_load_gpr(t1, 6);
-        tcg_gen_qemu_st32(t1, t0, ctx->mem_idx);
+        tcg_gen_qemu_st_tl(t1, t0, ctx->mem_idx, MO_TEUL);
         /* Fall through */
     case 2:
         gen_base_offset_addr(ctx, t0, 29, 4);
         gen_load_gpr(t1, 5);
-        tcg_gen_qemu_st32(t1, t0, ctx->mem_idx);
+        tcg_gen_qemu_st_tl(t1, t0, ctx->mem_idx, MO_TEUL);
         /* Fall through */
     case 1:
         gen_base_offset_addr(ctx, t0, 29, 0);
         gen_load_gpr(t1, 4);
-        tcg_gen_qemu_st32(t1, t0, ctx->mem_idx);
+        tcg_gen_qemu_st_tl(t1, t0, ctx->mem_idx, MO_TEUL);
     }
 
     gen_load_gpr(t0, 29);
 
-#define DECR_AND_STORE(reg) do {                \
-        tcg_gen_subi_tl(t0, t0, 4);             \
-        gen_load_gpr(t1, reg);                  \
-        tcg_gen_qemu_st32(t1, t0, ctx->mem_idx);                  \
+#define DECR_AND_STORE(reg) do {                                 \
+        tcg_gen_subi_tl(t0, t0, 4);                              \
+        gen_load_gpr(t1, reg);                                   \
+        tcg_gen_qemu_st_tl(t1, t0, ctx->mem_idx, MO_TEUL); \
     } while (0)
 
     if (do_ra) {
@@ -9407,10 +9428,10 @@ static void gen_mips16_restore (DisasContext *ctx,
 
     tcg_gen_addi_tl(t0, cpu_gpr[29], framesize);
 
-#define DECR_AND_LOAD(reg) do {                   \
-        tcg_gen_subi_tl(t0, t0, 4);               \
-        tcg_gen_qemu_ld32s(t1, t0, ctx->mem_idx); \
-        gen_store_gpr(t1, reg);                   \
+#define DECR_AND_LOAD(reg) do {                            \
+        tcg_gen_subi_tl(t0, t0, 4);                        \
+        tcg_gen_qemu_ld_tl(t1, t0, ctx->mem_idx, MO_TESL); \
+        gen_store_gpr(t1, reg);                            \
     } while (0)
 
     if (do_ra) {
@@ -10935,7 +10956,7 @@ static void gen_ldxs (DisasContext *ctx, int base, int index, int rd)
         gen_op_addr_add(ctx, t0, t1, t0);
     }
 
-    tcg_gen_qemu_ld32s(t1, t0, ctx->mem_idx);
+    tcg_gen_qemu_ld_tl(t1, t0, ctx->mem_idx, MO_TESL);
     gen_store_gpr(t1, rd);
 
     tcg_temp_free(t0);
@@ -10964,21 +10985,21 @@ static void gen_ldst_pair (DisasContext *ctx, uint32_t opc, int rd,
             generate_exception(ctx, EXCP_RI);
             return;
         }
-        tcg_gen_qemu_ld32s(t1, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t1, t0, ctx->mem_idx, MO_TESL);
         gen_store_gpr(t1, rd);
         tcg_gen_movi_tl(t1, 4);
         gen_op_addr_add(ctx, t0, t0, t1);
-        tcg_gen_qemu_ld32s(t1, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t1, t0, ctx->mem_idx, MO_TESL);
         gen_store_gpr(t1, rd+1);
         opn = "lwp";
         break;
     case SWP:
         gen_load_gpr(t1, rd);
-        tcg_gen_qemu_st32(t1, t0, ctx->mem_idx);
+        tcg_gen_qemu_st_tl(t1, t0, ctx->mem_idx, MO_TEUL);
         tcg_gen_movi_tl(t1, 4);
         gen_op_addr_add(ctx, t0, t0, t1);
         gen_load_gpr(t1, rd+1);
-        tcg_gen_qemu_st32(t1, t0, ctx->mem_idx);
+        tcg_gen_qemu_st_tl(t1, t0, ctx->mem_idx, MO_TEUL);
         opn = "swp";
         break;
 #ifdef TARGET_MIPS64
@@ -10987,21 +11008,21 @@ static void gen_ldst_pair (DisasContext *ctx, uint32_t opc, int rd,
             generate_exception(ctx, EXCP_RI);
             return;
         }
-        tcg_gen_qemu_ld64(t1, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t1, t0, ctx->mem_idx, MO_TEQ);
         gen_store_gpr(t1, rd);
         tcg_gen_movi_tl(t1, 8);
         gen_op_addr_add(ctx, t0, t0, t1);
-        tcg_gen_qemu_ld64(t1, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t1, t0, ctx->mem_idx, MO_TEQ);
         gen_store_gpr(t1, rd+1);
         opn = "ldp";
         break;
     case SDP:
         gen_load_gpr(t1, rd);
-        tcg_gen_qemu_st64(t1, t0, ctx->mem_idx);
+        tcg_gen_qemu_st_tl(t1, t0, ctx->mem_idx, MO_TEQ);
         tcg_gen_movi_tl(t1, 8);
         gen_op_addr_add(ctx, t0, t0, t1);
         gen_load_gpr(t1, rd+1);
-        tcg_gen_qemu_st64(t1, t0, ctx->mem_idx);
+        tcg_gen_qemu_st_tl(t1, t0, ctx->mem_idx, MO_TEQ);
         opn = "sdp";
         break;
 #endif
@@ -11964,7 +11985,7 @@ static void decode_micromips32_opc (CPUMIPSState *env, DisasContext *ctx,
                         gen_movcf_d(ctx, rs, rt, cc, 0);
                         break;
                     case FMT_SDPS_PS:
-                        gen_movcf_ps(rs, rt, cc, 0);
+                        gen_movcf_ps(ctx, rs, rt, cc, 0);
                         break;
                     default:
                         goto pool32f_invalid;
@@ -11979,7 +12000,7 @@ static void decode_micromips32_opc (CPUMIPSState *env, DisasContext *ctx,
                         gen_movcf_d(ctx, rs, rt, cc, 1);
                         break;
                     case FMT_SDPS_PS:
-                        gen_movcf_ps(rs, rt, cc, 1);
+                        gen_movcf_ps(ctx, rs, rt, cc, 1);
                         break;
                     default:
                         goto pool32f_invalid;
@@ -12672,23 +12693,23 @@ static void gen_mipsdsp_ld(DisasContext *ctx, uint32_t opc,
 
     switch (opc) {
     case OPC_LBUX:
-        tcg_gen_qemu_ld8u(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_UB);
         gen_store_gpr(t0, rd);
         opn = "lbux";
         break;
     case OPC_LHX:
-        tcg_gen_qemu_ld16s(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_TESW);
         gen_store_gpr(t0, rd);
         opn = "lhx";
         break;
     case OPC_LWX:
-        tcg_gen_qemu_ld32s(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_TESL);
         gen_store_gpr(t0, rd);
         opn = "lwx";
         break;
 #if defined(TARGET_MIPS64)
     case OPC_LDX:
-        tcg_gen_qemu_ld64(t0, t0, ctx->mem_idx);
+        tcg_gen_qemu_ld_tl(t0, t0, ctx->mem_idx, MO_TEQ);
         gen_store_gpr(t0, rd);
         opn = "ldx";
         break;
@@ -15601,8 +15622,8 @@ gen_intermediate_code_internal(MIPSCPU *cpu, TranslationBlock *tb,
     LOG_DISAS("\ntb %p idx %d hflags %04x\n", tb, ctx.mem_idx, ctx.hflags);
     gen_tb_start();
     while (ctx.bstate == BS_NONE) {
-        if (unlikely(!QTAILQ_EMPTY(&env->breakpoints))) {
-            QTAILQ_FOREACH(bp, &env->breakpoints, entry) {
+        if (unlikely(!QTAILQ_EMPTY(&cs->breakpoints))) {
+            QTAILQ_FOREACH(bp, &cs->breakpoints, entry) {
                 if (bp->pc == ctx.pc) {
                     save_cpu_state(&ctx, 1);
                     ctx.bstate = BS_BRANCH;
@@ -15917,10 +15938,8 @@ MIPSCPU *cpu_mips_init(const char *cpu_model)
 
 void cpu_state_reset(CPUMIPSState *env)
 {
-#ifndef CONFIG_USER_ONLY
     MIPSCPU *cpu = mips_env_get_cpu(env);
     CPUState *cs = CPU(cpu);
-#endif
 
     /* Reset registers to their default values */
     env->CP0_PRid = env->cpu_model->CP0_PRid;
@@ -15931,6 +15950,10 @@ void cpu_state_reset(CPUMIPSState *env)
     env->CP0_Config1 = env->cpu_model->CP0_Config1;
     env->CP0_Config2 = env->cpu_model->CP0_Config2;
     env->CP0_Config3 = env->cpu_model->CP0_Config3;
+    env->CP0_Config4 = env->cpu_model->CP0_Config4;
+    env->CP0_Config4_rw_bitmask = env->cpu_model->CP0_Config4_rw_bitmask;
+    env->CP0_Config5 = env->cpu_model->CP0_Config5;
+    env->CP0_Config5_rw_bitmask = env->cpu_model->CP0_Config5_rw_bitmask;
     env->CP0_Config6 = env->cpu_model->CP0_Config6;
     env->CP0_Config7 = env->cpu_model->CP0_Config7;
     env->CP0_LLAddr_rw_bitmask = env->cpu_model->CP0_LLAddr_rw_bitmask
@@ -15983,10 +16006,13 @@ void cpu_state_reset(CPUMIPSState *env)
     if (env->CP0_Config3 & (1 << CP0C3_DSPP)) {
         env->CP0_Status |= (1 << CP0St_MX);
     }
-    /* Enable 64-bit FPU if the target cpu supports it.  */
-    if (env->active_fpu.fcr0 & (1 << FCR0_F64)) {
+# if defined(TARGET_MIPS64)
+    /* For MIPS64, init FR bit to 1 if FPU unit is there and bit is writable. */
+    if ((env->CP0_Config1 & (1 << CP0C1_FP)) &&
+        (env->CP0_Status_rw_bitmask & (1 << CP0St_FR))) {
         env->CP0_Status |= (1 << CP0St_FR);
     }
+# endif
 #else
     if (env->hflags & MIPS_HFLAG_BMASK) {
         /* If the exception was raised from a delay slot,
@@ -16044,7 +16070,7 @@ void cpu_state_reset(CPUMIPSState *env)
     }
 #endif
     compute_hflags(env);
-    env->exception_index = EXCP_NONE;
+    cs->exception_index = EXCP_NONE;
 }
 
 void restore_state_to_opc(CPUMIPSState *env, TranslationBlock *tb, int pc_pos)

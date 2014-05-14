@@ -57,6 +57,11 @@ GENERATED_HEADERS += trace/generated-tracers-dtrace.h
 endif
 GENERATED_SOURCES += trace/generated-tracers.c
 
+ifeq ($(TRACE_BACKEND),ust)
+GENERATED_HEADERS += trace/generated-ust-provider.h
+GENERATED_SOURCES += trace/generated-ust.c
+endif
+
 # Don't try to regenerate Makefile or configure
 # We don't generate any of them
 Makefile: ;
@@ -122,13 +127,30 @@ defconfig:
 
 ifneq ($(wildcard config-host.mak),)
 include $(SRC_PATH)/Makefile.objs
+endif
+
+dummy := $(call unnest-vars,, \
+                stub-obj-y \
+                util-obj-y \
+                qga-obj-y \
+                qga-vss-dll-obj-y \
+                block-obj-y \
+                block-obj-m \
+                common-obj-y \
+                common-obj-m)
+
+ifneq ($(wildcard config-host.mak),)
 include $(SRC_PATH)/tests/Makefile
 endif
 ifeq ($(CONFIG_SMARTCARD_NSS),y)
 include $(SRC_PATH)/libcacard/Makefile
 endif
 
-all: $(DOCS) $(TOOLS) $(HELPERS-y) recurse-all
+all: $(DOCS) $(TOOLS) $(HELPERS-y) recurse-all modules
+
+vl.o: QEMU_CFLAGS+=$(GPROF_CFLAGS)
+
+vl.o: QEMU_CFLAGS+=$(SDL_CFLAGS)
 
 config-host.h: config-host.h-timestamp
 config-host.h-timestamp: config-host.mak
@@ -138,6 +160,7 @@ qemu-options.def: $(SRC_PATH)/qemu-options.hx
 SUBDIR_RULES=$(patsubst %,subdir-%, $(TARGET_DIRS))
 SOFTMMU_SUBDIR_RULES=$(filter %-softmmu,$(SUBDIR_RULES))
 
+$(SOFTMMU_SUBDIR_RULES): $(block-obj-y)
 $(SOFTMMU_SUBDIR_RULES): config-all-devices.mak
 
 subdir-%:
@@ -186,6 +209,9 @@ Makefile: $(version-obj-y) $(version-lobj-y)
 
 libqemustub.a: $(stub-obj-y)
 libqemuutil.a: $(util-obj-y) qapi-types.o qapi-visit.o
+
+block-modules = $(foreach o,$(block-obj-m),"$(basename $(subst /,-,$o))",) NULL
+util/module.o-cflags = -D'CONFIG_BLOCK_MODULES=$(block-modules)'
 
 ######################################################################
 
@@ -240,8 +266,7 @@ clean:
 # avoid old build problems by removing potentially incorrect old files
 	rm -f config.mak op-i386.h opc-i386.h gen-op-i386.h op-arm.h opc-arm.h gen-op-arm.h
 	rm -f qemu-options.def
-	find . -name '*.[oda]' -type f -exec rm -f {} +
-	find . -name '*.l[oa]' -type f -exec rm -f {} +
+	find . \( -name '*.l[oa]' -o -name '*.so' -o -name '*.dll' -o -name '*.mo' -o -name '*.[oda]' \) -type f -exec rm {} +
 	rm -f $(filter-out %.tlb,$(TOOLS)) $(HELPERS-y) qemu-ga TAGS cscope.* *.pod *~ */*~
 	rm -f fsdev/*.pod
 	rm -rf .libs */.libs
@@ -290,10 +315,10 @@ common  de-ch  es     fo  fr-ca  hu     ja  mk  nl-be      pt  sl     tr \
 bepo    cz
 
 ifdef INSTALL_BLOBS
-BLOBS=bios.bin sgabios.bin vgabios.bin vgabios-cirrus.bin \
+BLOBS=bios.bin bios-256k.bin sgabios.bin vgabios.bin vgabios-cirrus.bin \
 vgabios-stdvga.bin vgabios-vmware.bin vgabios-qxl.bin \
 acpi-dsdt.aml q35-acpi-dsdt.aml \
-ppc_rom.bin openbios-sparc32 openbios-sparc64 openbios-ppc QEMU,tcx.bin \
+ppc_rom.bin openbios-sparc32 openbios-sparc64 openbios-ppc QEMU,tcx.bin QEMU,cgthree.bin \
 pxe-e1000.rom pxe-eepro100.rom pxe-ne2k_pci.rom \
 pxe-pcnet.rom pxe-rtl8139.rom pxe-virtio.rom \
 efi-e1000.rom efi-eepro100.rom efi-ne2k_pci.rom \
@@ -349,6 +374,12 @@ install-datadir install-localstatedir
 ifneq ($(TOOLS),)
 	$(INSTALL_PROG) $(STRIP_OPT) $(TOOLS) "$(DESTDIR)$(bindir)"
 endif
+ifneq ($(CONFIG_MODULES),)
+	$(INSTALL_DIR) "$(DESTDIR)$(qemu_moddir)"
+	for s in $(patsubst %.mo,%$(DSOSUF),$(modules-m)); do \
+		$(INSTALL_PROG) $(STRIP_OPT) $$s "$(DESTDIR)$(qemu_moddir)/$$(echo $$s | tr / -)"; \
+	done
+endif
 ifneq ($(HELPERS-y),)
 	$(INSTALL_DIR) "$(DESTDIR)$(libexecdir)"
 	$(INSTALL_PROG) $(STRIP_OPT) $(HELPERS-y) "$(DESTDIR)$(libexecdir)"
@@ -366,7 +397,7 @@ endif
 		$(INSTALL_DATA) $(SRC_PATH)/pc-bios/keymaps/$$x "$(DESTDIR)$(qemu_datadir)/keymaps"; \
 	done
 	for d in $(TARGET_DIRS); do \
-	$(MAKE) -C $$d $@ || exit 1 ; \
+	$(MAKE) $(SUBDIR_MAKEFLAGS) TARGET_DIR=$$d/ -C $$d $@ || exit 1 ; \
         done
 
 # various test targets

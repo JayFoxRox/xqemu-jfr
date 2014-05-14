@@ -22,6 +22,7 @@
  * THE SOFTWARE.
  */
 
+#include "elf.h"
 #include "tcg-be-ldst.h"
 
 /* The __ARM_ARCH define is provided by gcc 4.8.  Construct it otherwise.  */
@@ -58,8 +59,12 @@ static int arm_arch = __ARM_ARCH;
 #ifndef use_idiv_instructions
 bool use_idiv_instructions;
 #endif
-#ifdef CONFIG_GETAUXVAL
-# include <sys/auxv.h>
+
+/* ??? Ought to think about changing CONFIG_SOFTMMU to always defined.  */
+#ifdef CONFIG_SOFTMMU
+# define USING_SOFTMMU 1
+#else
+# define USING_SOFTMMU 0
 #endif
 
 #ifndef NDEBUG
@@ -1406,7 +1411,9 @@ static inline void tcg_out_qemu_ld_index(TCGContext *s, TCGMemOp opc,
             TCGReg dl = (bswap ? datahi : datalo);
             TCGReg dh = (bswap ? datalo : datahi);
 
-            if (use_armv6_instructions && (dl & 1) == 0 && dh == dl + 1) {
+            /* Avoid ldrd for user-only emulation, to handle unaligned.  */
+            if (USING_SOFTMMU && use_armv6_instructions
+                && (dl & 1) == 0 && dh == dl + 1) {
                 tcg_out_ldrd_r(s, COND_AL, dl, addrlo, addend);
             } else if (dl != addend) {
                 tcg_out_ld32_rwb(s, COND_AL, dl, addend, addrlo);
@@ -1465,7 +1472,9 @@ static inline void tcg_out_qemu_ld_direct(TCGContext *s, TCGMemOp opc,
             TCGReg dl = (bswap ? datahi : datalo);
             TCGReg dh = (bswap ? datalo : datahi);
 
-            if (use_armv6_instructions && (dl & 1) == 0 && dh == dl + 1) {
+            /* Avoid ldrd for user-only emulation, to handle unaligned.  */
+            if (USING_SOFTMMU && use_armv6_instructions
+                && (dl & 1) == 0 && dh == dl + 1) {
                 tcg_out_ldrd_8(s, COND_AL, dl, addrlo, 0);
             } else if (dl == addrlo) {
                 tcg_out_ld32_12(s, COND_AL, dh, addrlo, bswap ? 0 : 4);
@@ -1550,12 +1559,13 @@ static inline void tcg_out_qemu_st_index(TCGContext *s, int cond, TCGMemOp opc,
         }
         break;
     case MO_64:
+        /* Avoid strd for user-only emulation, to handle unaligned.  */
         if (bswap) {
             tcg_out_bswap32(s, cond, TCG_REG_R0, datahi);
             tcg_out_st32_rwb(s, cond, TCG_REG_R0, addend, addrlo);
             tcg_out_bswap32(s, cond, TCG_REG_R0, datalo);
             tcg_out_st32_12(s, cond, TCG_REG_R0, addend, 4);
-        } else if (use_armv6_instructions
+        } else if (USING_SOFTMMU && use_armv6_instructions
                    && (datalo & 1) == 0 && datahi == datalo + 1) {
             tcg_out_strd_r(s, cond, datalo, addrlo, addend);
         } else {
@@ -1594,12 +1604,13 @@ static inline void tcg_out_qemu_st_direct(TCGContext *s, TCGMemOp opc,
         }
         break;
     case MO_64:
+        /* Avoid strd for user-only emulation, to handle unaligned.  */
         if (bswap) {
             tcg_out_bswap32(s, COND_AL, TCG_REG_R0, datahi);
             tcg_out_st32_12(s, COND_AL, TCG_REG_R0, addrlo, 0);
             tcg_out_bswap32(s, COND_AL, TCG_REG_R0, datalo);
             tcg_out_st32_12(s, COND_AL, TCG_REG_R0, addrlo, 4);
-        } else if (use_armv6_instructions
+        } else if (USING_SOFTMMU && use_armv6_instructions
                    && (datalo & 1) == 0 && datahi == datalo + 1) {
             tcg_out_strd_8(s, COND_AL, datalo, addrlo, 0);
         } else {
@@ -1868,7 +1879,7 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
                             SHIFT_IMM_ROR((0x20 - args[2]) & 0x1f) :
                             SHIFT_IMM_LSL(0));
         } else {
-            tcg_out_dat_imm(s, COND_AL, ARITH_RSB, TCG_REG_TMP, args[1], 0x20);
+            tcg_out_dat_imm(s, COND_AL, ARITH_RSB, TCG_REG_TMP, args[2], 0x20);
             tcg_out_dat_reg(s, COND_AL, ARITH_MOV, args[0], 0, args[1],
                             SHIFT_REG_ROR(TCG_REG_TMP));
         }
@@ -2036,22 +2047,20 @@ static const TCGTargetOpDef arm_op_defs[] = {
 
 static void tcg_target_init(TCGContext *s)
 {
-#if defined(CONFIG_GETAUXVAL)
     /* Only probe for the platform and capabilities if we havn't already
        determined maximum values at compile time.  */
-# if !defined(use_idiv_instructions)
+#ifndef use_idiv_instructions
     {
-        unsigned long hwcap = getauxval(AT_HWCAP);
+        unsigned long hwcap = qemu_getauxval(AT_HWCAP);
         use_idiv_instructions = (hwcap & HWCAP_ARM_IDIVA) != 0;
     }
-# endif
+#endif
     if (__ARM_ARCH < 7) {
-        const char *pl = (const char *)getauxval(AT_PLATFORM);
+        const char *pl = (const char *)qemu_getauxval(AT_PLATFORM);
         if (pl != NULL && pl[0] == 'v' && pl[1] >= '4' && pl[1] <= '9') {
             arm_arch = pl[1] - '0';
         }
     }
-#endif /* GETAUXVAL */
 
     tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I32], 0, 0xffff);
     tcg_regset_set32(tcg_target_call_clobber_regs, 0,

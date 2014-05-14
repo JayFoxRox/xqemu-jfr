@@ -26,7 +26,7 @@
 #define TCG_H
 
 #include "qemu-common.h"
-
+#include "qemu/bitops.h"
 #include "tcg-target.h"
 
 /* Default target word size to pointer size.  */
@@ -324,13 +324,16 @@ typedef int TCGv_i64;
 
 #define TCGV_EQUAL_I32(a, b) (GET_TCGV_I32(a) == GET_TCGV_I32(b))
 #define TCGV_EQUAL_I64(a, b) (GET_TCGV_I64(a) == GET_TCGV_I64(b))
+#define TCGV_EQUAL_PTR(a, b) (GET_TCGV_PTR(a) == GET_TCGV_PTR(b))
 
 /* Dummy definition to avoid compiler warnings.  */
 #define TCGV_UNUSED_I32(x) x = MAKE_TCGV_I32(-1)
 #define TCGV_UNUSED_I64(x) x = MAKE_TCGV_I64(-1)
+#define TCGV_UNUSED_PTR(x) x = MAKE_TCGV_PTR(-1)
 
 #define TCGV_IS_UNUSED_I32(x) (GET_TCGV_I32(x) == -1)
 #define TCGV_IS_UNUSED_I64(x) (GET_TCGV_I64(x) == -1)
+#define TCGV_IS_UNUSED_PTR(x) (GET_TCGV_PTR(x) == -1)
 
 /* call flags */
 /* Helper does not read globals (either directly or through an exception). It
@@ -436,12 +439,14 @@ typedef struct TCGTemp {
                                   basic blocks. Otherwise, it is not
                                   preserved across basic blocks. */
     unsigned int temp_allocated:1; /* never used for code gen */
-    /* index of next free temp of same base type, -1 if end */
-    int next_free_temp;
     const char *name;
 } TCGTemp;
 
 typedef struct TCGContext TCGContext;
+
+typedef struct TCGTempSet {
+    unsigned long l[BITS_TO_LONGS(TCG_MAX_TEMPS)];
+} TCGTempSet;
 
 struct TCGContext {
     uint8_t *pool_cur, *pool_end;
@@ -450,8 +455,6 @@ struct TCGContext {
     int nb_labels;
     int nb_globals;
     int nb_temps;
-    /* index of free temps, -1 if none */
-    int first_free_temp[TCG_TYPE_COUNT * 2]; 
 
     /* goto_tb support */
     uint8_t *code_buf;
@@ -477,6 +480,7 @@ struct TCGContext {
 
     uint8_t *code_ptr;
     TCGTemp temps[TCG_MAX_TEMPS]; /* globals first, temps after */
+    TCGTempSet free_temps[TCG_TYPE_COUNT * 2];
 
     GHashTable *helpers;
 

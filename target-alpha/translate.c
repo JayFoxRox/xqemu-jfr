@@ -1927,6 +1927,7 @@ static ExitStatus translate_one(DisasContext *ctx, uint32_t insn)
                     else {
                         tcg_gen_neg_i64(cpu_ir[rc], cpu_ir[rb]);
                         tcg_gen_ext32s_i64(cpu_ir[rc], cpu_ir[rc]);
+                    }
                 }
             }
             break;
@@ -1991,7 +1992,7 @@ static ExitStatus translate_one(DisasContext *ctx, uint32_t insn)
                 } else {
                     if (islit)
                         tcg_gen_movi_i64(cpu_ir[rc], -lit);
-                    else
+                    else {
                         tcg_gen_neg_i64(cpu_ir[rc], cpu_ir[rb]);
                         tcg_gen_ext32s_i64(cpu_ir[rc], cpu_ir[rc]);
                     }
@@ -2912,11 +2913,11 @@ static ExitStatus translate_one(DisasContext *ctx, uint32_t insn)
             switch ((insn >> 12) & 0xF) {
             case 0x0:
                 /* Longword physical access (hw_ldl/p) */
-                gen_helper_ldl_phys(cpu_ir[ra], addr);
+                gen_helper_ldl_phys(cpu_ir[ra], cpu_env, addr);
                 break;
             case 0x1:
                 /* Quadword physical access (hw_ldq/p) */
-                gen_helper_ldq_phys(cpu_ir[ra], addr);
+                gen_helper_ldq_phys(cpu_ir[ra], cpu_env, addr);
                 break;
             case 0x2:
                 /* Longword physical access with lock (hw_ldl_l/p) */
@@ -3225,11 +3226,11 @@ static ExitStatus translate_one(DisasContext *ctx, uint32_t insn)
             switch ((insn >> 12) & 0xF) {
             case 0x0:
                 /* Longword physical access */
-                gen_helper_stl_phys(addr, val);
+                gen_helper_stl_phys(cpu_env, addr, val);
                 break;
             case 0x1:
                 /* Quadword physical access */
-                gen_helper_stq_phys(addr, val);
+                gen_helper_stq_phys(cpu_env, addr, val);
                 break;
             case 0x2:
                 /* Longword physical access with lock */
@@ -3463,8 +3464,8 @@ static inline void gen_intermediate_code_internal(AlphaCPU *cpu,
 
     gen_tb_start();
     do {
-        if (unlikely(!QTAILQ_EMPTY(&env->breakpoints))) {
-            QTAILQ_FOREACH(bp, &env->breakpoints, entry) {
+        if (unlikely(!QTAILQ_EMPTY(&cs->breakpoints))) {
+            QTAILQ_FOREACH(bp, &cs->breakpoints, entry) {
                 if (bp->pc == ctx.pc) {
                     gen_excp(&ctx, EXCP_DEBUG, 0);
                     break;

@@ -164,7 +164,6 @@ void qemu_macaddr_default_if_unset(MACAddr *macaddr)
 static char *assign_name(NetClientState *nc1, const char *model)
 {
     NetClientState *nc;
-    char buf[256];
     int id = 0;
 
     QTAILQ_FOREACH(nc, &net_clients, next) {
@@ -176,9 +175,7 @@ static char *assign_name(NetClientState *nc1, const char *model)
         }
     }
 
-    snprintf(buf, sizeof(buf), "%s.%d", model, id);
-
-    return g_strdup(buf);
+    return g_strdup_printf("%s.%d", model, id);
 }
 
 static void qemu_net_client_destructor(NetClientState *nc)
@@ -379,6 +376,61 @@ void qemu_foreach_nic(qemu_nic_foreach func, void *opaque)
             }
         }
     }
+}
+
+bool qemu_has_ufo(NetClientState *nc)
+{
+    if (!nc || !nc->info->has_ufo) {
+        return false;
+    }
+
+    return nc->info->has_ufo(nc);
+}
+
+bool qemu_has_vnet_hdr(NetClientState *nc)
+{
+    if (!nc || !nc->info->has_vnet_hdr) {
+        return false;
+    }
+
+    return nc->info->has_vnet_hdr(nc);
+}
+
+bool qemu_has_vnet_hdr_len(NetClientState *nc, int len)
+{
+    if (!nc || !nc->info->has_vnet_hdr_len) {
+        return false;
+    }
+
+    return nc->info->has_vnet_hdr_len(nc, len);
+}
+
+void qemu_using_vnet_hdr(NetClientState *nc, bool enable)
+{
+    if (!nc || !nc->info->using_vnet_hdr) {
+        return;
+    }
+
+    nc->info->using_vnet_hdr(nc, enable);
+}
+
+void qemu_set_offload(NetClientState *nc, int csum, int tso4, int tso6,
+                          int ecn, int ufo)
+{
+    if (!nc || !nc->info->set_offload) {
+        return;
+    }
+
+    nc->info->set_offload(nc, csum, tso4, tso6, ecn, ufo);
+}
+
+void qemu_set_vnet_hdr_len(NetClientState *nc, int len)
+{
+    if (!nc || !nc->info->set_vnet_hdr_len) {
+        return;
+    }
+
+    nc->info->set_vnet_hdr_len(nc, len);
 }
 
 int qemu_can_send_packet(NetClientState *sender)
@@ -726,6 +778,9 @@ static int (* const net_client_init_fun[NET_CLIENT_OPTIONS_KIND_MAX])(
 #ifdef CONFIG_VDE
         [NET_CLIENT_OPTIONS_KIND_VDE]       = net_init_vde,
 #endif
+#ifdef CONFIG_NETMAP
+        [NET_CLIENT_OPTIONS_KIND_NETMAP]    = net_init_netmap,
+#endif
         [NET_CLIENT_OPTIONS_KIND_DUMP]      = net_init_dump,
 #ifdef CONFIG_NET_BRIDGE
         [NET_CLIENT_OPTIONS_KIND_BRIDGE]    = net_init_bridge,
@@ -756,6 +811,9 @@ static int net_client_init1(const void *object, int is_netdev, Error **errp)
         case NET_CLIENT_OPTIONS_KIND_SOCKET:
 #ifdef CONFIG_VDE
         case NET_CLIENT_OPTIONS_KIND_VDE:
+#endif
+#ifdef CONFIG_NETMAP
+        case NET_CLIENT_OPTIONS_KIND_NETMAP:
 #endif
 #ifdef CONFIG_NET_BRIDGE
         case NET_CLIENT_OPTIONS_KIND_BRIDGE:
@@ -850,7 +908,7 @@ static int net_host_check_device(const char *device)
                                        ,"vde"
 #endif
     };
-    for (i = 0; i < sizeof(valid_param_list) / sizeof(char *); i++) {
+    for (i = 0; i < ARRAY_SIZE(valid_param_list); i++) {
         if (!strncmp(valid_param_list[i], device,
                      strlen(valid_param_list[i])))
             return 1;
@@ -879,7 +937,7 @@ void net_host_device_add(Monitor *mon, const QDict *qdict)
     qemu_opt_set(opts, "type", device);
 
     net_client_init(opts, 0, &local_err);
-    if (error_is_set(&local_err)) {
+    if (local_err) {
         qerror_report_err(local_err);
         error_free(local_err);
         monitor_printf(mon, "adding host network device %s failed\n", device);
@@ -915,17 +973,17 @@ int qmp_netdev_add(Monitor *mon, const QDict *qdict, QObject **ret)
     QemuOpts *opts;
 
     opts_list = qemu_find_opts_err("netdev", &local_err);
-    if (error_is_set(&local_err)) {
+    if (local_err) {
         goto exit_err;
     }
 
     opts = qemu_opts_from_qdict(opts_list, qdict, &local_err);
-    if (error_is_set(&local_err)) {
+    if (local_err) {
         goto exit_err;
     }
 
     netdev_add(opts, &local_err);
-    if (error_is_set(&local_err)) {
+    if (local_err) {
         qemu_opts_del(opts);
         goto exit_err;
     }
@@ -1065,15 +1123,23 @@ void qmp_set_link(const char *name, bool up, Error **errp)
         nc->info->link_status_changed(nc);
     }
 
-    /* Notify peer. Don't update peer link status: this makes it possible to
-     * disconnect from host network without notifying the guest.
-     * FIXME: is disconnected link status change operation useful?
-     *
-     * Current behaviour is compatible with qemu vlans where there could be
-     * multiple clients that can still communicate with each other in
-     * disconnected mode. For now maintain this compatibility. */
-    if (nc->peer && nc->peer->info->link_status_changed) {
-        nc->peer->info->link_status_changed(nc->peer);
+    if (nc->peer) {
+        /* Change peer link only if the peer is NIC and then notify peer.
+         * If the peer is a HUBPORT or a backend, we do not change the
+         * link status.
+         *
+         * This behavior is compatible with qemu vlans where there could be
+         * multiple clients that can still communicate with each other in
+         * disconnected mode. For now maintain this compatibility.
+         */
+        if (nc->peer->info->type == NET_CLIENT_OPTIONS_KIND_NIC) {
+            for (i = 0; i < queues; i++) {
+                ncs[i]->peer->link_down = !up;
+            }
+        }
+        if (nc->peer->info->link_status_changed) {
+            nc->peer->info->link_status_changed(nc->peer);
+        }
     }
 }
 
@@ -1141,7 +1207,7 @@ static int net_init_client(QemuOpts *opts, void *dummy)
     Error *local_err = NULL;
 
     net_client_init(opts, 0, &local_err);
-    if (error_is_set(&local_err)) {
+    if (local_err) {
         qerror_report_err(local_err);
         error_free(local_err);
         return -1;
@@ -1156,7 +1222,7 @@ static int net_init_netdev(QemuOpts *opts, void *dummy)
     int ret;
 
     ret = net_client_init(opts, 1, &local_err);
-    if (error_is_set(&local_err)) {
+    if (local_err) {
         qerror_report_err(local_err);
         error_free(local_err);
         return -1;

@@ -66,25 +66,20 @@ struct SMBusDevice {
 };
 
 /* Master device commands.  */
-void smbus_quick_command(i2c_bus *bus, uint8_t addr, int read);
-uint8_t smbus_receive_byte(i2c_bus *bus, uint8_t addr);
-void smbus_send_byte(i2c_bus *bus, uint8_t addr, uint8_t data);
-uint8_t smbus_read_byte(i2c_bus *bus, uint8_t addr, uint8_t command);
-void smbus_write_byte(i2c_bus *bus, uint8_t addr, uint8_t command, uint8_t data);
-uint16_t smbus_read_word(i2c_bus *bus, uint8_t addr, uint8_t command);
-void smbus_write_word(i2c_bus *bus, uint8_t addr, uint8_t command, uint16_t data);
-int smbus_read_block(i2c_bus *bus, uint8_t addr, uint8_t command, uint8_t *data);
-void smbus_write_block(i2c_bus *bus, uint8_t addr, uint8_t command, uint8_t *data,
+void smbus_quick_command(I2CBus *bus, uint8_t addr, int read);
+uint8_t smbus_receive_byte(I2CBus *bus, uint8_t addr);
+void smbus_send_byte(I2CBus *bus, uint8_t addr, uint8_t data);
+uint8_t smbus_read_byte(I2CBus *bus, uint8_t addr, uint8_t command);
+void smbus_write_byte(I2CBus *bus, uint8_t addr, uint8_t command, uint8_t data);
+uint16_t smbus_read_word(I2CBus *bus, uint8_t addr, uint8_t command);
+void smbus_write_word(I2CBus *bus, uint8_t addr, uint8_t command, uint16_t data);
+int smbus_read_block(I2CBus *bus, uint8_t addr, uint8_t command, uint8_t *data);
+void smbus_write_block(I2CBus *bus, uint8_t addr, uint8_t command, uint8_t *data,
                        int len);
 
-void smbus_eeprom_init_single(i2c_bus *smbus, int address,
+void smbus_eeprom_init_single(I2CBus *smbus, int address,
                               uint8_t *eeprom_buf);
-void smbus_eeprom_init(i2c_bus *smbus, int nb_eeprom,
+void smbus_eeprom_init(I2CBus *smbus, int nb_eeprom,
                        const uint8_t *eeprom_spd, int size);
-
-
-void smbus_xbox_smc_init(i2c_bus *smbus, int address);
-void smbus_cx25871_init(i2c_bus *smbus, int address);
-void smbus_adm1032_init(i2c_bus *smbus, int address);
 
 #endif

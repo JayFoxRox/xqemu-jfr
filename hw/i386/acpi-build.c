@@ -36,9 +36,11 @@
 #include "hw/nvram/fw_cfg.h"
 #include "bios-linker-loader.h"
 #include "hw/loader.h"
+#include "hw/isa/isa.h"
 
 /* Supported chipsets: */
 #include "hw/acpi/piix4.h"
+#include "hw/acpi/pcihp.h"
 #include "hw/i386/ich9.h"
 #include "hw/pci/pci_bus.h"
 #include "hw/pci-host/q35.h"
@@ -50,7 +52,7 @@
 #include "qom/qom-qobject.h"
 
 typedef struct AcpiCpuInfo {
-    DECLARE_BITMAP(found_cpus, MAX_CPUMASK_BITS + 1);
+    DECLARE_BITMAP(found_cpus, ACPI_CPU_HOTPLUG_ID_LIMIT);
 } AcpiCpuInfo;
 
 typedef struct AcpiMcfgInfo {
@@ -78,8 +80,15 @@ typedef struct AcpiMiscInfo {
     uint16_t pvpanic_port;
 } AcpiMiscInfo;
 
+typedef struct AcpiBuildPciBusHotplugState {
+    GArray *device_table;
+    GArray *notify_table;
+    struct AcpiBuildPciBusHotplugState *parent;
+} AcpiBuildPciBusHotplugState;
+
 static void acpi_get_dsdt(AcpiMiscInfo *info)
 {
+    uint16_t *applesmc_sta;
     Object *piix = piix4_pm_find();
     Object *lpc = ich9_lpc_find();
     assert(!!piix != !!lpc);
@@ -87,11 +96,17 @@ static void acpi_get_dsdt(AcpiMiscInfo *info)
     if (piix) {
         info->dsdt_code = AcpiDsdtAmlCode;
         info->dsdt_size = sizeof AcpiDsdtAmlCode;
+        applesmc_sta = piix_dsdt_applesmc_sta;
     }
     if (lpc) {
         info->dsdt_code = Q35AcpiDsdtAmlCode;
         info->dsdt_size = sizeof Q35AcpiDsdtAmlCode;
+        applesmc_sta = q35_dsdt_applesmc_sta;
     }
+
+    /* Patch in appropriate value for AppleSMC _STA */
+    *(uint8_t *)(info->dsdt_code + *applesmc_sta) =
+        applesmc_find() ? 0x0b : 0x00;
 }
 
 static
@@ -102,7 +117,7 @@ int acpi_add_cpu_info(Object *o, void *opaque)
 
     if (object_dynamic_cast(o, TYPE_CPU)) {
         apic_id = object_property_get_int(o, "apic-id", NULL);
-        assert(apic_id <= MAX_CPUMASK_BITS);
+        assert(apic_id < ACPI_CPU_HOTPLUG_ID_LIMIT);
 
         set_bit(apic_id, cpu->found_cpus);
     }
@@ -171,38 +186,6 @@ static void acpi_get_pm_info(AcpiPmInfo *pm)
                                                NULL);
 }
 
-static void acpi_get_hotplug_info(AcpiMiscInfo *misc)
-{
-    int i;
-    PCIBus *bus = find_i440fx();
-
-    if (!bus) {
-        /* Only PIIX supports ACPI hotplug */
-        memset(misc->slot_hotplug_enable, 0, sizeof misc->slot_hotplug_enable);
-        return;
-    }
-
-    memset(misc->slot_hotplug_enable, 0xff,
-           DIV_ROUND_UP(PCI_SLOT_MAX, BITS_PER_BYTE));
-
-    for (i = 0; i < ARRAY_SIZE(bus->devices); ++i) {
-        PCIDeviceClass *pc;
-        PCIDevice *pdev = bus->devices[i];
-
-        if (!pdev) {
-            continue;
-        }
-
-        pc = PCI_DEVICE_GET_CLASS(pdev);
-
-        if (pc->no_hotplug) {
-            int slot = PCI_SLOT(i);
-
-            clear_bit(slot, misc->slot_hotplug_enable);
-        }
-    }
-}
-
 static void acpi_get_misc_info(AcpiMiscInfo *info)
 {
     info->has_hpet = hpet_find();
@@ -243,14 +226,14 @@ static void acpi_get_pci_info(PcPciInfo *info)
 
 static void
 build_header(GArray *linker, GArray *table_data,
-             AcpiTableHeader *h, uint32_t sig, int len, uint8_t rev)
+             AcpiTableHeader *h, const char *sig, int len, uint8_t rev)
 {
-    h->signature = cpu_to_le32(sig);
+    memcpy(&h->signature, sig, 4);
     h->length = cpu_to_le32(len);
     h->revision = rev;
     memcpy(h->oem_id, ACPI_BUILD_APPNAME6, 6);
     memcpy(h->oem_table_id, ACPI_BUILD_APPNAME4, 4);
-    memcpy(h->oem_table_id + 4, (void *)&sig, 4);
+    memcpy(h->oem_table_id + 4, sig, 4);
     h->oem_revision = cpu_to_le32(1);
     memcpy(h->asl_compiler_id, ACPI_BUILD_APPNAME4, 4);
     h->asl_compiler_revision = cpu_to_le32(1);
@@ -285,7 +268,8 @@ static inline void build_append_array(GArray *array, GArray *val)
     g_array_append_vals(array, val->data, val->len);
 }
 
-static void build_append_nameseg(GArray *array, const char *format, ...)
+static void GCC_FMT_ATTR(2, 3)
+build_append_nameseg(GArray *array, const char *format, ...)
 {
     /* It would be nicer to use g_string_vprintf but it's only there in 2.22 */
     char s[] = "XXXX";
@@ -367,6 +351,12 @@ static void build_package(GArray *package, uint8_t op, unsigned min_bytes)
     build_prepend_byte(package, op);
 }
 
+static void build_extop_package(GArray *package, uint8_t op)
+{
+    build_package(package, op, 1);
+    build_prepend_byte(package, 0x5B); /* ExtOpPrefix */
+}
+
 static void build_append_value(GArray *table, uint32_t value, int size)
 {
     uint8_t prefix;
@@ -393,8 +383,44 @@ static void build_append_value(GArray *table, uint32_t value, int size)
     }
 }
 
-static void build_append_notify_target(GArray *method, GArray *target_name,
-                                       uint32_t value, int size)
+static void build_append_int(GArray *table, uint32_t value)
+{
+    if (value == 0x00) {
+        build_append_byte(table, 0x00); /* ZeroOp */
+    } else if (value == 0x01) {
+        build_append_byte(table, 0x01); /* OneOp */
+    } else if (value <= 0xFF) {
+        build_append_value(table, value, 1);
+    } else if (value <= 0xFFFF) {
+        build_append_value(table, value, 2);
+    } else {
+        build_append_value(table, value, 4);
+    }
+}
+
+static GArray *build_alloc_method(const char *name, uint8_t arg_count)
+{
+    GArray *method = build_alloc_array();
+
+    build_append_nameseg(method, "%s", name);
+    build_append_byte(method, arg_count); /* MethodFlags: ArgCount */
+
+    return method;
+}
+
+static void build_append_and_cleanup_method(GArray *device, GArray *method)
+{
+    uint8_t op = 0x14; /* MethodOp */
+
+    build_package(method, op, 0);
+
+    build_append_array(device, method);
+    build_free_array(method);
+}
+
+static void build_append_notify_target_ifequal(GArray *method,
+                                               GArray *target_name,
+                                               uint32_t value, int size)
 {
     GArray *notify = build_alloc_array();
     uint8_t op = 0xA0; /* IfOp */
@@ -414,6 +440,7 @@ static void build_append_notify_target(GArray *method, GArray *target_name,
     build_free_array(notify);
 }
 
+/* End here */
 #define ACPI_PORT_SMI_CMD           0x00b2 /* TODO: this is APM_CNT_IOPORT */
 
 static inline void *acpi_data_push(GArray *table_data, unsigned size)
@@ -439,9 +466,15 @@ static void acpi_align_size(GArray *blob, unsigned align)
     g_array_set_size(blob, ROUND_UP(acpi_data_len(blob), align));
 }
 
-/* Get pointer within table in a safe manner */
-#define ACPI_BUILD_PTR(table, size, off, type) \
-    ((type *)(acpi_data_get_ptr(table, size, off, sizeof(type))))
+/* Set a value within table in a safe manner */
+#define ACPI_BUILD_SET_LE(table, size, off, bits, val) \
+    do { \
+        uint64_t ACPI_BUILD_SET_LE_val = cpu_to_le64(val); \
+        memcpy(acpi_data_get_ptr(table, size, off, \
+                                 (bits) / BITS_PER_BYTE), \
+               &ACPI_BUILD_SET_LE_val, \
+               (bits) / BITS_PER_BYTE); \
+    } while (0)
 
 static inline void *acpi_data_get_ptr(uint8_t *table_data, unsigned table_size,
                                       unsigned off, unsigned size)
@@ -462,7 +495,7 @@ static void
 build_facs(GArray *table_data, GArray *linker, PcGuestInfo *guest_info)
 {
     AcpiFacsDescriptorRev1 *facs = acpi_data_push(table_data, sizeof *facs);
-    facs->signature = cpu_to_le32(ACPI_FACS_SIGNATURE);
+    memcpy(&facs->signature, "FACS", 4);
     facs->length = cpu_to_le32(sizeof(*facs));
 }
 
@@ -519,7 +552,7 @@ build_fadt(GArray *table_data, GArray *linker, AcpiPmInfo *pm,
     fadt_setup(fadt, pm);
 
     build_header(linker, table_data,
-                 (void *)fadt, ACPI_FACP_SIGNATURE, sizeof(*fadt), 1);
+                 (void *)fadt, "FACP", sizeof(*fadt), 1);
 }
 
 static void
@@ -588,7 +621,7 @@ build_madt(GArray *table_data, GArray *linker, AcpiCpuInfo *cpu,
     local_nmi->lint         = 1; /* ACPI_LINT1 */
 
     build_header(linker, table_data,
-                 (void *)(table_data->data + madt_start), ACPI_APIC_SIGNATURE,
+                 (void *)(table_data->data + madt_start), "APIC",
                  table_data->len - madt_start, 1);
 }
 
@@ -616,6 +649,21 @@ static inline char acpi_get_hex(uint32_t val)
 #define ACPI_PCIHP_SIZEOF (*ssdt_pcihp_end - *ssdt_pcihp_start)
 #define ACPI_PCIHP_AML (ssdp_pcihp_aml + *ssdt_pcihp_start)
 
+#define ACPI_PCINOHP_OFFSET_HEX (*ssdt_pcinohp_name - *ssdt_pcinohp_start + 1)
+#define ACPI_PCINOHP_OFFSET_ADR (*ssdt_pcinohp_adr - *ssdt_pcinohp_start)
+#define ACPI_PCINOHP_SIZEOF (*ssdt_pcinohp_end - *ssdt_pcinohp_start)
+#define ACPI_PCINOHP_AML (ssdp_pcihp_aml + *ssdt_pcinohp_start)
+
+#define ACPI_PCIVGA_OFFSET_HEX (*ssdt_pcivga_name - *ssdt_pcivga_start + 1)
+#define ACPI_PCIVGA_OFFSET_ADR (*ssdt_pcivga_adr - *ssdt_pcivga_start)
+#define ACPI_PCIVGA_SIZEOF (*ssdt_pcivga_end - *ssdt_pcivga_start)
+#define ACPI_PCIVGA_AML (ssdp_pcihp_aml + *ssdt_pcivga_start)
+
+#define ACPI_PCIQXL_OFFSET_HEX (*ssdt_pciqxl_name - *ssdt_pciqxl_start + 1)
+#define ACPI_PCIQXL_OFFSET_ADR (*ssdt_pciqxl_adr - *ssdt_pciqxl_start)
+#define ACPI_PCIQXL_SIZEOF (*ssdt_pciqxl_end - *ssdt_pciqxl_start)
+#define ACPI_PCIQXL_AML (ssdp_pcihp_aml + *ssdt_pciqxl_start)
+
 #define ACPI_SSDT_SIGNATURE 0x54445353 /* SSDT */
 #define ACPI_SSDT_HEADER_LENGTH 36
 
@@ -623,64 +671,326 @@ static inline char acpi_get_hex(uint32_t val)
 #include "hw/i386/ssdt-pcihp.hex"
 
 static void
-build_append_notify(GArray *device, const char *name,
-                    const char *format, int skip, int count)
+build_append_notify_method(GArray *device, const char *name,
+                           const char *format, int count)
 {
     int i;
-    GArray *method = build_alloc_array();
-    uint8_t op = 0x14; /* MethodOp */
+    GArray *method = build_alloc_method(name, 2);
 
-    build_append_nameseg(method, name);
-    build_append_byte(method, 0x02); /* MethodFlags: ArgCount */
-    for (i = skip; i < count; i++) {
+    for (i = 0; i < count; i++) {
         GArray *target = build_alloc_array();
         build_append_nameseg(target, format, i);
         assert(i < 256); /* Fits in 1 byte */
-        build_append_notify_target(method, target, i, 1);
+        build_append_notify_target_ifequal(method, target, i, 1);
         build_free_array(target);
     }
-    build_package(method, op, 2);
 
-    build_append_array(device, method);
-    build_free_array(method);
+    build_append_and_cleanup_method(device, method);
 }
 
-static void patch_pcihp(int slot, uint8_t *ssdt_ptr, uint32_t eject)
+static void patch_pcihp(int slot, uint8_t *ssdt_ptr)
 {
-    ssdt_ptr[ACPI_PCIHP_OFFSET_HEX] = acpi_get_hex(slot >> 4);
-    ssdt_ptr[ACPI_PCIHP_OFFSET_HEX + 1] = acpi_get_hex(slot);
+    unsigned devfn = PCI_DEVFN(slot, 0);
+
+    ssdt_ptr[ACPI_PCIHP_OFFSET_HEX] = acpi_get_hex(devfn >> 4);
+    ssdt_ptr[ACPI_PCIHP_OFFSET_HEX + 1] = acpi_get_hex(devfn);
     ssdt_ptr[ACPI_PCIHP_OFFSET_ID] = slot;
     ssdt_ptr[ACPI_PCIHP_OFFSET_ADR + 2] = slot;
+}
 
-    /* Runtime patching of ACPI_EJ0: to disable hotplug for a slot,
-     * replace the method name: _EJ0 by ACPI_EJ0_.
-     */
-    /* Sanity check */
-    assert(!memcmp(ssdt_ptr + ACPI_PCIHP_OFFSET_EJ0, "_EJ0", 4));
+static void patch_pcinohp(int slot, uint8_t *ssdt_ptr)
+{
+    unsigned devfn = PCI_DEVFN(slot, 0);
 
-    if (!eject) {
-        memcpy(ssdt_ptr + ACPI_PCIHP_OFFSET_EJ0, "EJ0_", 4);
+    ssdt_ptr[ACPI_PCINOHP_OFFSET_HEX] = acpi_get_hex(devfn >> 4);
+    ssdt_ptr[ACPI_PCINOHP_OFFSET_HEX + 1] = acpi_get_hex(devfn);
+    ssdt_ptr[ACPI_PCINOHP_OFFSET_ADR + 2] = slot;
+}
+
+static void patch_pcivga(int slot, uint8_t *ssdt_ptr)
+{
+    unsigned devfn = PCI_DEVFN(slot, 0);
+
+    ssdt_ptr[ACPI_PCIVGA_OFFSET_HEX] = acpi_get_hex(devfn >> 4);
+    ssdt_ptr[ACPI_PCIVGA_OFFSET_HEX + 1] = acpi_get_hex(devfn);
+    ssdt_ptr[ACPI_PCIVGA_OFFSET_ADR + 2] = slot;
+}
+
+static void patch_pciqxl(int slot, uint8_t *ssdt_ptr)
+{
+    unsigned devfn = PCI_DEVFN(slot, 0);
+
+    ssdt_ptr[ACPI_PCIQXL_OFFSET_HEX] = acpi_get_hex(devfn >> 4);
+    ssdt_ptr[ACPI_PCIQXL_OFFSET_HEX + 1] = acpi_get_hex(devfn);
+    ssdt_ptr[ACPI_PCIQXL_OFFSET_ADR + 2] = slot;
+}
+
+/* Assign BSEL property to all buses.  In the future, this can be changed
+ * to only assign to buses that support hotplug.
+ */
+static void *acpi_set_bsel(PCIBus *bus, void *opaque)
+{
+    unsigned *bsel_alloc = opaque;
+    unsigned *bus_bsel;
+
+    if (bus->qbus.allow_hotplug) {
+        bus_bsel = g_malloc(sizeof *bus_bsel);
+
+        *bus_bsel = (*bsel_alloc)++;
+        object_property_add_uint32_ptr(OBJECT(bus), ACPI_PCIHP_PROP_BSEL,
+                                       bus_bsel, NULL);
     }
+
+    return bsel_alloc;
+}
+
+static void acpi_set_pci_info(void)
+{
+    PCIBus *bus = find_i440fx(); /* TODO: Q35 support */
+    unsigned bsel_alloc = 0;
+
+    if (bus) {
+        /* Scan all PCI buses. Set property to enable acpi based hotplug. */
+        pci_for_each_bus_depth_first(bus, acpi_set_bsel, NULL, &bsel_alloc);
+    }
+}
+
+static void build_pci_bus_state_init(AcpiBuildPciBusHotplugState *state,
+                                     AcpiBuildPciBusHotplugState *parent)
+{
+    state->parent = parent;
+    state->device_table = build_alloc_array();
+    state->notify_table = build_alloc_array();
+}
+
+static void build_pci_bus_state_cleanup(AcpiBuildPciBusHotplugState *state)
+{
+    build_free_array(state->device_table);
+    build_free_array(state->notify_table);
+}
+
+static void *build_pci_bus_begin(PCIBus *bus, void *parent_state)
+{
+    AcpiBuildPciBusHotplugState *parent = parent_state;
+    AcpiBuildPciBusHotplugState *child = g_malloc(sizeof *child);
+
+    build_pci_bus_state_init(child, parent);
+
+    return child;
+}
+
+static void build_pci_bus_end(PCIBus *bus, void *bus_state)
+{
+    AcpiBuildPciBusHotplugState *child = bus_state;
+    AcpiBuildPciBusHotplugState *parent = child->parent;
+    GArray *bus_table = build_alloc_array();
+    DECLARE_BITMAP(slot_hotplug_enable, PCI_SLOT_MAX);
+    DECLARE_BITMAP(slot_device_present, PCI_SLOT_MAX);
+    DECLARE_BITMAP(slot_device_system, PCI_SLOT_MAX);
+    DECLARE_BITMAP(slot_device_vga, PCI_SLOT_MAX);
+    DECLARE_BITMAP(slot_device_qxl, PCI_SLOT_MAX);
+    uint8_t op;
+    int i;
+    QObject *bsel;
+    GArray *method;
+    bool bus_hotplug_support = false;
+
+    if (bus->parent_dev) {
+        op = 0x82; /* DeviceOp */
+        build_append_nameseg(bus_table, "S%.02X_",
+                             bus->parent_dev->devfn);
+        build_append_byte(bus_table, 0x08); /* NameOp */
+        build_append_nameseg(bus_table, "_SUN");
+        build_append_value(bus_table, PCI_SLOT(bus->parent_dev->devfn), 1);
+        build_append_byte(bus_table, 0x08); /* NameOp */
+        build_append_nameseg(bus_table, "_ADR");
+        build_append_value(bus_table, (PCI_SLOT(bus->parent_dev->devfn) << 16) |
+                           PCI_FUNC(bus->parent_dev->devfn), 4);
+    } else {
+        op = 0x10; /* ScopeOp */;
+        build_append_nameseg(bus_table, "PCI0");
+    }
+
+    bsel = object_property_get_qobject(OBJECT(bus), ACPI_PCIHP_PROP_BSEL, NULL);
+    if (bsel) {
+        build_append_byte(bus_table, 0x08); /* NameOp */
+        build_append_nameseg(bus_table, "BSEL");
+        build_append_int(bus_table, qint_get_int(qobject_to_qint(bsel)));
+        memset(slot_hotplug_enable, 0xff, sizeof slot_hotplug_enable);
+    } else {
+        /* No bsel - no slots are hot-pluggable */
+        memset(slot_hotplug_enable, 0x00, sizeof slot_hotplug_enable);
+    }
+
+    memset(slot_device_present, 0x00, sizeof slot_device_present);
+    memset(slot_device_system, 0x00, sizeof slot_device_present);
+    memset(slot_device_vga, 0x00, sizeof slot_device_vga);
+    memset(slot_device_qxl, 0x00, sizeof slot_device_qxl);
+
+    for (i = 0; i < ARRAY_SIZE(bus->devices); i += PCI_FUNC_MAX) {
+        DeviceClass *dc;
+        PCIDeviceClass *pc;
+        PCIDevice *pdev = bus->devices[i];
+        int slot = PCI_SLOT(i);
+
+        if (!pdev) {
+            continue;
+        }
+
+        set_bit(slot, slot_device_present);
+        pc = PCI_DEVICE_GET_CLASS(pdev);
+        dc = DEVICE_GET_CLASS(pdev);
+
+        if (pc->class_id == PCI_CLASS_BRIDGE_ISA || pc->is_bridge) {
+            set_bit(slot, slot_device_system);
+        }
+
+        if (pc->class_id == PCI_CLASS_DISPLAY_VGA) {
+            set_bit(slot, slot_device_vga);
+
+            if (object_dynamic_cast(OBJECT(pdev), "qxl-vga")) {
+                set_bit(slot, slot_device_qxl);
+            }
+        }
+
+        if (!dc->hotpluggable || pc->is_bridge) {
+            clear_bit(slot, slot_hotplug_enable);
+        }
+    }
+
+    /* Append Device object for each slot */
+    for (i = 0; i < PCI_SLOT_MAX; i++) {
+        bool can_eject = test_bit(i, slot_hotplug_enable);
+        bool present = test_bit(i, slot_device_present);
+        bool vga = test_bit(i, slot_device_vga);
+        bool qxl = test_bit(i, slot_device_qxl);
+        bool system = test_bit(i, slot_device_system);
+        if (can_eject) {
+            void *pcihp = acpi_data_push(bus_table,
+                                         ACPI_PCIHP_SIZEOF);
+            memcpy(pcihp, ACPI_PCIHP_AML, ACPI_PCIHP_SIZEOF);
+            patch_pcihp(i, pcihp);
+            bus_hotplug_support = true;
+        } else if (qxl) {
+            void *pcihp = acpi_data_push(bus_table,
+                                         ACPI_PCIQXL_SIZEOF);
+            memcpy(pcihp, ACPI_PCIQXL_AML, ACPI_PCIQXL_SIZEOF);
+            patch_pciqxl(i, pcihp);
+        } else if (vga) {
+            void *pcihp = acpi_data_push(bus_table,
+                                         ACPI_PCIVGA_SIZEOF);
+            memcpy(pcihp, ACPI_PCIVGA_AML, ACPI_PCIVGA_SIZEOF);
+            patch_pcivga(i, pcihp);
+        } else if (system) {
+            /* Nothing to do: system devices are in DSDT or in SSDT above. */
+        } else if (present) {
+            void *pcihp = acpi_data_push(bus_table,
+                                         ACPI_PCINOHP_SIZEOF);
+            memcpy(pcihp, ACPI_PCINOHP_AML, ACPI_PCINOHP_SIZEOF);
+            patch_pcinohp(i, pcihp);
+        }
+    }
+
+    if (bsel) {
+        method = build_alloc_method("DVNT", 2);
+
+        for (i = 0; i < PCI_SLOT_MAX; i++) {
+            GArray *notify;
+            uint8_t op;
+
+            if (!test_bit(i, slot_hotplug_enable)) {
+                continue;
+            }
+
+            notify = build_alloc_array();
+            op = 0xA0; /* IfOp */
+
+            build_append_byte(notify, 0x7B); /* AndOp */
+            build_append_byte(notify, 0x68); /* Arg0Op */
+            build_append_int(notify, 0x1U << i);
+            build_append_byte(notify, 0x00); /* NullName */
+            build_append_byte(notify, 0x86); /* NotifyOp */
+            build_append_nameseg(notify, "S%.02X_", PCI_DEVFN(i, 0));
+            build_append_byte(notify, 0x69); /* Arg1Op */
+
+            /* Pack it up */
+            build_package(notify, op, 0);
+
+            build_append_array(method, notify);
+
+            build_free_array(notify);
+        }
+
+        build_append_and_cleanup_method(bus_table, method);
+    }
+
+    /* Append PCNT method to notify about events on local and child buses.
+     * Add unconditionally for root since DSDT expects it.
+     */
+    if (bus_hotplug_support || child->notify_table->len || !bus->parent_dev) {
+        method = build_alloc_method("PCNT", 0);
+
+        /* If bus supports hotplug select it and notify about local events */
+        if (bsel) {
+            build_append_byte(method, 0x70); /* StoreOp */
+            build_append_int(method, qint_get_int(qobject_to_qint(bsel)));
+            build_append_nameseg(method, "BNUM");
+            build_append_nameseg(method, "DVNT");
+            build_append_nameseg(method, "PCIU");
+            build_append_int(method, 1); /* Device Check */
+            build_append_nameseg(method, "DVNT");
+            build_append_nameseg(method, "PCID");
+            build_append_int(method, 3); /* Eject Request */
+        }
+
+        /* Notify about child bus events in any case */
+        build_append_array(method, child->notify_table);
+
+        build_append_and_cleanup_method(bus_table, method);
+
+        /* Append description of child buses */
+        build_append_array(bus_table, child->device_table);
+
+        /* Pack it up */
+        if (bus->parent_dev) {
+            build_extop_package(bus_table, op);
+        } else {
+            build_package(bus_table, op, 0);
+        }
+
+        /* Append our bus description to parent table */
+        build_append_array(parent->device_table, bus_table);
+
+        /* Also tell parent how to notify us, invoking PCNT method.
+         * At the moment this is not needed for root as we have a single root.
+         */
+        if (bus->parent_dev) {
+            build_append_byte(parent->notify_table, '^'); /* ParentPrefixChar */
+            build_append_byte(parent->notify_table, 0x2E); /* DualNamePrefix */
+            build_append_nameseg(parent->notify_table, "S%.02X_",
+                                 bus->parent_dev->devfn);
+            build_append_nameseg(parent->notify_table, "PCNT");
+        }
+    }
+
+    build_free_array(bus_table);
+    build_pci_bus_state_cleanup(child);
+    g_free(child);
 }
 
 static void patch_pci_windows(PcPciInfo *pci, uint8_t *start, unsigned size)
 {
-    *ACPI_BUILD_PTR(start, size, acpi_pci32_start[0], uint32_t) =
-        cpu_to_le32(pci->w32.begin);
+    ACPI_BUILD_SET_LE(start, size, acpi_pci32_start[0], 32, pci->w32.begin);
 
-    *ACPI_BUILD_PTR(start, size, acpi_pci32_end[0], uint32_t) =
-        cpu_to_le32(pci->w32.end - 1);
+    ACPI_BUILD_SET_LE(start, size, acpi_pci32_end[0], 32, pci->w32.end - 1);
 
     if (pci->w64.end || pci->w64.begin) {
-        *ACPI_BUILD_PTR(start, size, acpi_pci64_valid[0], uint8_t) = 1;
-        *ACPI_BUILD_PTR(start, size, acpi_pci64_start[0], uint64_t) =
-            cpu_to_le64(pci->w64.begin);
-        *ACPI_BUILD_PTR(start, size, acpi_pci64_end[0], uint64_t) =
-            cpu_to_le64(pci->w64.end - 1);
-        *ACPI_BUILD_PTR(start, size, acpi_pci64_length[0], uint64_t) =
-            cpu_to_le64(pci->w64.end - pci->w64.begin);
+        ACPI_BUILD_SET_LE(start, size, acpi_pci64_valid[0], 8, 1);
+        ACPI_BUILD_SET_LE(start, size, acpi_pci64_start[0], 64, pci->w64.begin);
+        ACPI_BUILD_SET_LE(start, size, acpi_pci64_end[0], 64, pci->w64.end - 1);
+        ACPI_BUILD_SET_LE(start, size, acpi_pci64_length[0], 64, pci->w64.end - pci->w64.begin);
     } else {
-        *ACPI_BUILD_PTR(start, size, acpi_pci64_valid[0], uint8_t) = 0;
+        ACPI_BUILD_SET_LE(start, size, acpi_pci64_valid[0], 8, 0);
     }
 }
 
@@ -689,10 +999,15 @@ build_ssdt(GArray *table_data, GArray *linker,
            AcpiCpuInfo *cpu, AcpiPmInfo *pm, AcpiMiscInfo *misc,
            PcPciInfo *pci, PcGuestInfo *guest_info)
 {
-    int acpi_cpus = MIN(0xff, guest_info->apic_id_limit);
+    unsigned acpi_cpus = guest_info->apic_id_limit;
     int ssdt_start = table_data->len;
     uint8_t *ssdt_ptr;
     int i;
+
+    /* The current AML generator can cover the APIC ID range [0..255],
+     * inclusive, for VCPU hotplug. */
+    QEMU_BUILD_BUG_ON(ACPI_CPU_HOTPLUG_ID_LIMIT > 256);
+    g_assert(acpi_cpus <= ACPI_CPU_HOTPLUG_ID_LIMIT);
 
     /* Copy header and patch values in the S3_ / S4_ / S5_ packages */
     ssdt_ptr = acpi_data_push(table_data, sizeof(ssdp_misc_aml));
@@ -709,8 +1024,8 @@ build_ssdt(GArray *table_data, GArray *linker,
 
     patch_pci_windows(pci, ssdt_ptr, sizeof(ssdp_misc_aml));
 
-    *(uint16_t *)(ssdt_ptr + *ssdt_isa_pest) =
-        cpu_to_le16(misc->pvpanic_port);
+    ACPI_BUILD_SET_LE(ssdt_ptr, sizeof(ssdp_misc_aml),
+                      ssdt_isa_pest[0], 16, misc->pvpanic_port);
 
     {
         GArray *sb_scope = build_alloc_array();
@@ -732,7 +1047,7 @@ build_ssdt(GArray *table_data, GArray *linker,
          *   Method(NTFY, 2) {If (LEqual(Arg0, 0x00)) {Notify(CP00, Arg1)} ...}
          */
         /* Arg0 = Processor ID = APIC ID */
-        build_append_notify(sb_scope, "NTFY", "CP%0.02X", 0, acpi_cpus);
+        build_append_notify_method(sb_scope, "NTFY", "CP%0.02X", acpi_cpus);
 
         /* build "Name(CPON, Package() { One, One, ..., Zero, Zero, ... })" */
         build_append_byte(sb_scope, 0x08); /* NameOp */
@@ -740,9 +1055,21 @@ build_ssdt(GArray *table_data, GArray *linker,
 
         {
             GArray *package = build_alloc_array();
-            uint8_t op = 0x12; /* PackageOp */
+            uint8_t op;
 
-            build_append_byte(package, acpi_cpus); /* NumElements */
+            /*
+             * Note: The ability to create variable-sized packages was first introduced in ACPI 2.0. ACPI 1.0 only
+             * allowed fixed-size packages with up to 255 elements.
+             * Windows guests up to win2k8 fail when VarPackageOp is used.
+             */
+            if (acpi_cpus <= 255) {
+                op = 0x12; /* PackageOp */
+                build_append_byte(package, acpi_cpus); /* NumElements */
+            } else {
+                op = 0x13; /* VarPackageOp */
+                build_append_int(package, acpi_cpus); /* VarNumElements */
+            }
+
             for (i = 0; i < acpi_cpus; i++) {
                 uint8_t b = test_bit(i, cpu->found_cpus) ? 0x01 : 0x00;
                 build_append_byte(package, b);
@@ -754,24 +1081,26 @@ build_ssdt(GArray *table_data, GArray *linker,
         }
 
         {
-            GArray *pci0 = build_alloc_array();
-            uint8_t op = 0x10; /* ScopeOp */;
+            AcpiBuildPciBusHotplugState hotplug_state;
+            Object *pci_host;
+            PCIBus *bus = NULL;
+            bool ambiguous;
 
-            build_append_nameseg(pci0, "PCI0");
-
-            /* build Device object for each slot */
-            for (i = 1; i < PCI_SLOT_MAX; i++) {
-                bool eject = test_bit(i, misc->slot_hotplug_enable);
-                void *pcihp = acpi_data_push(pci0, ACPI_PCIHP_SIZEOF);
-
-                memcpy(pcihp, ACPI_PCIHP_AML, ACPI_PCIHP_SIZEOF);
-                patch_pcihp(i, pcihp, eject);
+            pci_host = object_resolve_path_type("", TYPE_PCI_HOST_BRIDGE, &ambiguous);
+            if (!ambiguous && pci_host) {
+                bus = PCI_HOST_BRIDGE(pci_host)->bus;
             }
 
-            build_append_notify(pci0, "PCNT", "S%0.02X_", 1, PCI_SLOT_MAX);
-            build_package(pci0, op, 3);
-            build_append_array(sb_scope, pci0);
-            build_free_array(pci0);
+            build_pci_bus_state_init(&hotplug_state, NULL);
+
+            if (bus) {
+                /* Scan all PCI buses. Generate tables to support hotplug. */
+                pci_for_each_bus_depth_first(bus, build_pci_bus_begin,
+                                             build_pci_bus_end, &hotplug_state);
+            }
+
+            build_append_array(sb_scope, hotplug_state.device_table);
+            build_pci_bus_state_cleanup(&hotplug_state);
         }
 
         build_package(sb_scope, op, 3);
@@ -781,7 +1110,7 @@ build_ssdt(GArray *table_data, GArray *linker,
 
     build_header(linker, table_data,
                  (void *)(table_data->data + ssdt_start),
-                 ACPI_SSDT_SIGNATURE, table_data->len - ssdt_start, 1);
+                 "SSDT", table_data->len - ssdt_start, 1);
 }
 
 static void
@@ -796,7 +1125,7 @@ build_hpet(GArray *table_data, GArray *linker)
     hpet->timer_block_id = cpu_to_le32(0x8086a201);
     hpet->addr.address = cpu_to_le64(HPET_BASE);
     build_header(linker, table_data,
-                 (void *)hpet, ACPI_HPET_SIGNATURE, sizeof(*hpet), 1);
+                 (void *)hpet, "HPET", sizeof(*hpet), 1);
 }
 
 static void
@@ -866,16 +1195,16 @@ build_srat(GArray *table_data, GArray *linker,
         next_base = mem_base + mem_len;
 
         /* Cut out the ACPI_PCI hole */
-        if (mem_base <= guest_info->ram_size &&
-            next_base > guest_info->ram_size) {
-            mem_len -= next_base - guest_info->ram_size;
+        if (mem_base <= guest_info->ram_size_below_4g &&
+            next_base > guest_info->ram_size_below_4g) {
+            mem_len -= next_base - guest_info->ram_size_below_4g;
             if (mem_len > 0) {
                 numamem = acpi_data_push(table_data, sizeof *numamem);
                 acpi_build_srat_memory(numamem, mem_base, mem_len, i-1, 1);
             }
             mem_base = 1ULL << 32;
-            mem_len = next_base - guest_info->ram_size;
-            next_base += (1ULL << 32) - guest_info->ram_size;
+            mem_len = next_base - guest_info->ram_size_below_4g;
+            next_base += (1ULL << 32) - guest_info->ram_size_below_4g;
         }
         numamem = acpi_data_push(table_data, sizeof *numamem);
         acpi_build_srat_memory(numamem, mem_base, mem_len, i - 1, 1);
@@ -888,7 +1217,7 @@ build_srat(GArray *table_data, GArray *linker,
 
     build_header(linker, table_data,
                  (void *)(table_data->data + srat_start),
-                 ACPI_SRAT_SIGNATURE,
+                 "SRAT",
                  table_data->len - srat_start, 1);
 }
 
@@ -896,7 +1225,7 @@ static void
 build_mcfg_q35(GArray *table_data, GArray *linker, AcpiMcfgInfo *info)
 {
     AcpiTableMcfg *mcfg;
-    uint32_t sig;
+    const char *sig;
     int len = sizeof(*mcfg) + 1 * sizeof(mcfg->allocation[0]);
 
     mcfg = acpi_data_push(table_data, len);
@@ -913,9 +1242,10 @@ build_mcfg_q35(GArray *table_data, GArray *linker, AcpiMcfgInfo *info)
      * ACPI spec requires OSPMs to ignore such tables.
      */
     if (info->mcfg_base == PCIE_BASE_ADDR_UNMAPPED) {
-        sig = ACPI_RSRV_SIGNATURE;
+        /* Reserved signature: ignored by OSPM */
+        sig = "QEMU";
     } else {
-        sig = ACPI_MCFG_SIGNATURE;
+        sig = "MCFG";
     }
     build_header(linker, table_data, (void *)mcfg, sig, len, 1);
 }
@@ -923,10 +1253,16 @@ build_mcfg_q35(GArray *table_data, GArray *linker, AcpiMcfgInfo *info)
 static void
 build_dsdt(GArray *table_data, GArray *linker, AcpiMiscInfo *misc)
 {
-    void *dsdt;
+    AcpiTableHeader *dsdt;
+
     assert(misc->dsdt_code && misc->dsdt_size);
+
     dsdt = acpi_data_push(table_data, misc->dsdt_size);
     memcpy(dsdt, misc->dsdt_code, misc->dsdt_size);
+
+    memset(dsdt, 0, sizeof *dsdt);
+    build_header(linker, table_data, dsdt, "DSDT",
+                 misc->dsdt_size, 1);
 }
 
 /* Build final rsdt table */
@@ -950,7 +1286,7 @@ build_rsdt(GArray *table_data, GArray *linker, GArray *table_offsets)
                                        sizeof(uint32_t));
     }
     build_header(linker, table_data,
-                 (void *)rsdt, ACPI_RSDT_SIGNATURE, rsdt_len, 1);
+                 (void *)rsdt, "RSDT", rsdt_len, 1);
 }
 
 static GArray *
@@ -961,7 +1297,7 @@ build_rsdp(GArray *rsdp_table, GArray *linker, unsigned rsdt)
     bios_linker_loader_alloc(linker, ACPI_BUILD_RSDP_FILE, 1,
                              true /* fseg memory */);
 
-    rsdp->signature = cpu_to_le64(ACPI_RSDP_SIGNATURE);
+    memcpy(&rsdp->signature, "RSD PTR ", 8);
     memcpy(rsdp->oem_id, ACPI_BUILD_APPNAME6, 6);
     rsdp->rsdt_physical_address = cpu_to_le32(rsdt);
     /* Address to be filled by Guest linker */
@@ -1048,7 +1384,6 @@ void acpi_build(PcGuestInfo *guest_info, AcpiBuildTables *tables)
     acpi_get_cpu_info(&cpu);
     acpi_get_pm_info(&pm);
     acpi_get_dsdt(&misc);
-    acpi_get_hotplug_info(&misc);
     acpi_get_misc_info(&misc);
     acpi_get_pci_info(&pci);
 
@@ -1192,6 +1527,8 @@ void acpi_setup(PcGuestInfo *guest_info)
     build_state = g_malloc0(sizeof *build_state);
 
     build_state->guest_info = guest_info;
+
+    acpi_set_pci_info();
 
     acpi_build_tables_init(&tables);
     acpi_build(build_state->guest_info, &tables);

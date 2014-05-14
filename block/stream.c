@@ -75,6 +75,8 @@ static void close_unused_images(BlockDriverState *top, BlockDriverState *base,
         unused->backing_hd = NULL;
         bdrv_unref(unused);
     }
+
+    bdrv_refresh_limits(top);
 }
 
 static void coroutine_fn stream_run(void *opaque)
@@ -87,6 +89,11 @@ static void coroutine_fn stream_run(void *opaque)
     int ret = 0;
     int n = 0;
     void *buf;
+
+    if (!bs->backing_hd) {
+        block_job_completed(&s->common, 0);
+        return;
+    }
 
     s->common.len = bdrv_getlength(bs);
     if (s->common.len < 0) {

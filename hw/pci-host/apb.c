@@ -58,11 +58,11 @@ do { printf("APB: " fmt , ## __VA_ARGS__); } while (0)
 #define PBM_PCI_IMR_MASK    0x7fffffff
 #define PBM_PCI_IMR_ENABLED 0x80000000
 
-#define POR          (1 << 31)
-#define SOFT_POR     (1 << 30)
-#define SOFT_XIR     (1 << 29)
-#define BTN_POR      (1 << 28)
-#define BTN_XIR      (1 << 27)
+#define POR          (1U << 31)
+#define SOFT_POR     (1U << 30)
+#define SOFT_XIR     (1U << 29)
+#define BTN_POR      (1U << 28)
+#define BTN_XIR      (1U << 27)
 #define RESET_MASK   0xf8000000
 #define RESET_WCMASK 0x98000000
 #define RESET_WMASK  0x60000000
@@ -516,11 +516,17 @@ static int pbm_pci_host_init(PCIDevice *d)
 static void pbm_pci_host_class_init(ObjectClass *klass, void *data)
 {
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
+    DeviceClass *dc = DEVICE_CLASS(klass);
 
     k->init = pbm_pci_host_init;
     k->vendor_id = PCI_VENDOR_ID_SUN;
     k->device_id = PCI_DEVICE_ID_SUN_SABRE;
     k->class_id = PCI_CLASS_BRIDGE_HOST;
+    /*
+     * PCI-facing part of the host bridge, not usable without the
+     * host-facing part, which can't be device_add'ed, yet.
+     */
+    dc->cannot_instantiate_with_device_add_yet = true;
 }
 
 static const TypeInfo pbm_pci_host_info = {

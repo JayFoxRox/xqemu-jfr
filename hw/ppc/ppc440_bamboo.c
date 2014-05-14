@@ -77,23 +77,23 @@ static int bamboo_load_device_tree(hwaddr addr,
 
     /* Manipulate device tree in memory. */
 
-    ret = qemu_devtree_setprop(fdt, "/memory", "reg", mem_reg_property,
-                               sizeof(mem_reg_property));
+    ret = qemu_fdt_setprop(fdt, "/memory", "reg", mem_reg_property,
+                           sizeof(mem_reg_property));
     if (ret < 0)
         fprintf(stderr, "couldn't set /memory/reg\n");
 
-    ret = qemu_devtree_setprop_cell(fdt, "/chosen", "linux,initrd-start",
-                                    initrd_base);
+    ret = qemu_fdt_setprop_cell(fdt, "/chosen", "linux,initrd-start",
+                                initrd_base);
     if (ret < 0)
         fprintf(stderr, "couldn't set /chosen/linux,initrd-start\n");
 
-    ret = qemu_devtree_setprop_cell(fdt, "/chosen", "linux,initrd-end",
-                                    (initrd_base + initrd_size));
+    ret = qemu_fdt_setprop_cell(fdt, "/chosen", "linux,initrd-end",
+                                (initrd_base + initrd_size));
     if (ret < 0)
         fprintf(stderr, "couldn't set /chosen/linux,initrd-end\n");
 
-    ret = qemu_devtree_setprop_string(fdt, "/chosen", "bootargs",
-                                      kernel_cmdline);
+    ret = qemu_fdt_setprop_string(fdt, "/chosen", "bootargs",
+                                  kernel_cmdline);
     if (ret < 0)
         fprintf(stderr, "couldn't set /chosen/bootargs\n");
 
@@ -105,10 +105,10 @@ static int bamboo_load_device_tree(hwaddr addr,
         clock_freq = kvmppc_get_clockfreq();
     }
 
-    qemu_devtree_setprop_cell(fdt, "/cpus/cpu@0", "clock-frequency",
-                              clock_freq);
-    qemu_devtree_setprop_cell(fdt, "/cpus/cpu@0", "timebase-frequency",
-                              tb_freq);
+    qemu_fdt_setprop_cell(fdt, "/cpus/cpu@0", "clock-frequency",
+                          clock_freq);
+    qemu_fdt_setprop_cell(fdt, "/cpus/cpu@0", "timebase-frequency",
+                          tb_freq);
 
     rom_add_blob_fixed(BINARY_DEVICE_TREE_FILE, fdt, fdt_size, addr);
     g_free(fdt);
@@ -128,7 +128,7 @@ static void mmubooke_create_initial_mapping(CPUPPCState *env,
 
     tlb->attr = 0;
     tlb->prot = PAGE_VALID | ((PAGE_READ | PAGE_WRITE | PAGE_EXEC) << 4);
-    tlb->size = 1 << 31; /* up to 0x80000000  */
+    tlb->size = 1U << 31; /* up to 0x80000000  */
     tlb->EPN = va & TARGET_PAGE_MASK;
     tlb->RPN = pa & TARGET_PAGE_MASK;
     tlb->PID = 0;
@@ -136,7 +136,7 @@ static void mmubooke_create_initial_mapping(CPUPPCState *env,
     tlb = &env->tlb.tlbe[1];
     tlb->attr = 0;
     tlb->prot = PAGE_VALID | ((PAGE_READ | PAGE_WRITE | PAGE_EXEC) << 4);
-    tlb->size = 1 << 31; /* up to 0xffffffff  */
+    tlb->size = 1U << 31; /* up to 0xffffffff  */
     tlb->EPN = 0x80000000 & TARGET_PAGE_MASK;
     tlb->RPN = 0x80000000 & TARGET_PAGE_MASK;
     tlb->PID = 0;

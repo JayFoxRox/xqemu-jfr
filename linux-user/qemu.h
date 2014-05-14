@@ -126,6 +126,7 @@ typedef struct TaskState {
 #endif
     uint32_t stack_base;
     int used; /* non zero if used */
+    bool sigsegv_blocked; /* SIGSEGV blocked by guest */
     struct image_info *info;
     struct linux_binprm *bprm;
 
@@ -178,10 +179,8 @@ int loader_exec(int fdexec, const char *filename, char **argv, char **envp,
              struct target_pt_regs * regs, struct image_info *infop,
              struct linux_binprm *);
 
-int load_elf_binary(struct linux_binprm * bprm, struct target_pt_regs * regs,
-                    struct image_info * info);
-int load_flt_binary(struct linux_binprm * bprm, struct target_pt_regs * regs,
-                    struct image_info * info);
+int load_elf_binary(struct linux_binprm *bprm, struct image_info *info);
+int load_flt_binary(struct linux_binprm *bprm, struct image_info *info);
 
 abi_long memcpy_to_target(abi_ulong dest, const void *src,
                           unsigned long len);
@@ -237,6 +236,7 @@ int host_to_target_signal(int sig);
 long do_sigreturn(CPUArchState *env);
 long do_rt_sigreturn(CPUArchState *env);
 abi_long do_sigaltstack(abi_ulong uss_addr, abi_ulong uoss_addr, abi_ulong sp);
+int do_sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
 
 #ifdef TARGET_I386
 /* vm86.c */
@@ -452,5 +452,6 @@ static inline void *lock_user_string(abi_ulong guest_addr)
  */
 #include "target_cpu.h"
 #include "target_signal.h"
+#include "target_structs.h"
 
 #endif /* QEMU_H */

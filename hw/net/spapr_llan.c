@@ -29,6 +29,7 @@
 #include "hw/qdev.h"
 #include "hw/ppc/spapr.h"
 #include "hw/ppc/spapr_vio.h"
+#include "sysemu/sysemu.h"
 
 #include <libfdt.h>
 
@@ -212,6 +213,8 @@ static int spapr_vlan_init(VIOsPAPRDevice *sdev)
     dev->nic = qemu_new_nic(&net_spapr_vlan_info, &dev->nicconf,
                             object_get_typename(OBJECT(sdev)), sdev->qdev.id, dev);
     qemu_format_nic_info_str(qemu_get_queue(dev->nic), dev->nicconf.macaddr.a);
+
+    add_boot_device_path(dev->nicconf.bootindex, DEVICE(dev), "");
 
     return 0;
 }
@@ -404,6 +407,8 @@ static target_ulong h_add_logical_lan_buffer(PowerPCCPU *cpu,
     vio_stq(sdev, dev->buf_list + dev->add_buf_ptr, buf);
 
     dev->rx_bufs++;
+
+    qemu_flush_queued_packets(qemu_get_queue(dev->nic));
 
     DPRINTF("h_add_logical_lan_buffer():  Added buf  ptr=%d  rx_bufs=%d"
             " bd=0x%016llx\n", dev->add_buf_ptr, dev->rx_bufs,

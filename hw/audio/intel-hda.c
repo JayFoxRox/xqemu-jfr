@@ -444,6 +444,7 @@ static bool intel_hda_xfer(HDACodecDevice *dev, uint32_t stnr, bool output,
         }
     }
     if (d->dp_lbase & 0x01) {
+        s = st - d->st;
         addr = intel_hda_addr(d->dp_lbase & ~0x01, d->dp_ubase);
         stl_le_pci_dma(&d->pci, addr + 8*s, st->lpib);
     }
@@ -899,7 +900,7 @@ static const IntelHDAReg *intel_hda_reg_find(IntelHDAState *d, hwaddr addr)
 {
     const IntelHDAReg *reg;
 
-    if (addr >= sizeof(regtab)/sizeof(regtab[0])) {
+    if (addr >= ARRAY_SIZE(regtab)) {
         goto noreg;
     }
     reg = regtab+addr;
@@ -1024,7 +1025,7 @@ static void intel_hda_regs_reset(IntelHDAState *d)
     uint32_t *addr;
     int i;
 
-    for (i = 0; i < sizeof(regtab)/sizeof(regtab[0]); i++) {
+    for (i = 0; i < ARRAY_SIZE(regtab); i++) {
         if (regtab[i].name == NULL) {
             continue;
         }
