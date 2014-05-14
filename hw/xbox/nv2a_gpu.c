@@ -1426,9 +1426,9 @@ static void update_irq(NV2A_GPUState *d)
     }
 
     if (d->pmc.pending_interrupts && d->pmc.enabled_interrupts) {
-        qemu_irq_raise(d->dev.irq[0]);
+        pci_irq_assert(&d->dev);
     } else {
-        qemu_irq_lower(d->dev.irq[0]);
+        pci_irq_deassert(&d->dev);
     }
 }
 
@@ -1461,8 +1461,8 @@ static RAMHTEntry ramht_lookup(NV2A_GPUState *d, uint32_t handle)
 
     entry_ptr = d->ramin_ptr + d->pfifo.ramht_address + hash * 8;
 
-    entry_handle = le32_to_cpupu((uint32_t*)entry_ptr);
-    entry_context = le32_to_cpupu((uint32_t*)(entry_ptr + 4));
+    entry_handle = ldl_le_p(entry_ptr);
+    entry_context = ldl_le_p(entry_ptr + 4);
 
     return (RAMHTEntry){
         .handle = entry_handle,
@@ -1478,9 +1478,9 @@ static DMAObject nv_dma_load(NV2A_GPUState *d, hwaddr dma_obj_address)
     assert(dma_obj_address < memory_region_size(&d->ramin));
 
     uint32_t *dma_obj = (uint32_t*)(d->ramin_ptr + dma_obj_address);
-    uint32_t flags = le32_to_cpupu(dma_obj);
-    uint32_t limit = le32_to_cpupu(dma_obj + 1);
-    uint32_t frame = le32_to_cpupu(dma_obj + 2);
+    uint32_t flags = ldl_le_p(dma_obj);
+    uint32_t limit = ldl_le_p(dma_obj + 1);
+    uint32_t frame = ldl_le_p(dma_obj + 2);
 
     return (DMAObject){
         .dma_class = GET_MASK(flags, NV_DMA_CLASS),
@@ -1513,9 +1513,9 @@ static void load_graphics_object(NV2A_GPUState *d, hwaddr instance_address,
 
     obj_ptr = d->ramin_ptr + instance_address;
 
-    switch1 = le32_to_cpupu((uint32_t*)obj_ptr);
-    switch2 = le32_to_cpupu((uint32_t*)(obj_ptr+4));
-    switch3 = le32_to_cpupu((uint32_t*)(obj_ptr+8));
+    switch1 = ldl_le_p(obj_ptr);
+    switch2 = ldl_le_p(obj_ptr+4);
+    switch3 = ldl_le_p(obj_ptr+8);
 
     obj->graphics_class = switch1 & NV_PGRAPH_CTX_SWITCH1_GRCLASS;
 
@@ -1595,7 +1595,7 @@ static void kelvin_bind_converted_vertex_attributes(NV2A_GPUState *d,
 
                 switch (attribute->format) {
                 case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_CMP:
-                    r11g11b10f_to_float3(le32_to_cpupu((uint32_t*)in),
+                    r11g11b10f_to_float3(ldl_le_p(in),
                                          (float*)out);
                     break;
                 default:
@@ -3288,7 +3288,7 @@ static void pgraph_method(NV2A_GPUState *d,
         assert(kelvin->semaphore_offset < semaphore_dma_len);
         semaphore_data += kelvin->semaphore_offset;
 
-        cpu_to_le32wu((uint32_t*)semaphore_data, parameter);
+        stl_le_p(semaphore_data, parameter);
 
         //qemu_mutex_lock(&d->pgraph.lock);
         //qemu_mutex_unlock_iothread();
@@ -3699,7 +3699,7 @@ static void pfifo_run_pusher(NV2A_GPUState *d) {
             break;
         }
 
-        word = le32_to_cpupu((uint32_t*)(dma + control->dma_get));
+        word = ldl_le_p(dma + control->dma_get);
         control->dma_get += 4;
 
         if (state->method_count) {
@@ -4202,7 +4202,7 @@ static void pvideo_write(void *opaque, hwaddr addr,
 /* PIMTER - time measurement and time-based alarms */
 static uint64_t ptimer_get_clock(NV2A_GPUState *d)
 {
-    return muldiv64(qemu_get_clock_ns(vm_clock),
+    return muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
                     d->pramdac.core_clock_freq * d->ptimer.numerator,
                     get_ticks_per_sec() * d->ptimer.denominator);
 }
@@ -4509,7 +4509,7 @@ static void pgraph_write(void *opaque, hwaddr addr,
                          d->pgraph.channel_id, d->pgraph.context_address);
 
             uint8_t *context_ptr = d->ramin_ptr + d->pgraph.context_address;
-            uint32_t context_user = le32_to_cpupu((uint32_t*)context_ptr);
+            uint32_t context_user = ldl_le_p(context_ptr);
 
             NV2A_GPU_DPRINTF("    - CTX_USER = 0x%x\n", context_user);
 

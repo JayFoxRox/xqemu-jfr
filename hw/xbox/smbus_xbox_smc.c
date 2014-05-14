@@ -256,7 +256,7 @@ static void smc_start_watchdog(SMBusSMCDevice* smc_dev) {
 
   // Now start the watchdog!
   //FIXME: Check if the watchdog is already active or something?
-  qemu_mod_timer_ns(smc_dev->watchdog_timer, qemu_get_clock_ns(vm_clock)+WATCHDOG_CHALLENGE_TIME_MS*1000*1000);
+  timer_mod_ns(smc_dev->watchdog_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)+WATCHDOG_CHALLENGE_TIME_MS*1000*1000);
 
 }
 
@@ -282,7 +282,7 @@ FIXME!
   //FIXME: Check if challenge was correct
   {
     // Disable watchdog
-    qemu_del_timer(smc_dev->watchdog_timer);
+    timer_del(smc_dev->watchdog_timer);
     printf("Watchdog stopped!\n");
   }
   //WWXD if a wrong response is uploaded before the timer runs out?
@@ -431,7 +431,7 @@ static void smc_led_timer_cb(SMBusSMCDevice* smc_dev) {
   print_led_color_change(smc_dev,led_color);
 #endif
   smc_dev->led_color = led_color;
-  qemu_mod_timer_ns(smc_dev->led_timer, qemu_get_clock_ns(vm_clock)+LED_INTERVAL_MS*1000*1000);
+  timer_mod_ns(smc_dev->led_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)+LED_INTERVAL_MS*1000*1000);
 }
 
 static void smc_watchdog_timer_cb(SMBusSMCDevice* smc_dev) {
@@ -550,16 +550,16 @@ static int smbus_smc_init(SMBusDevice *dev)
   smc_dev->scratch = 0x00;
   //FIXME: Remove or make an option
   if (1) {
-    if (0) { smc_dev->scratch |= 0x02; } // Display fatal error
+    if (1) { smc_dev->scratch |= 0x02; } // Display fatal error
     if (1) { smc_dev->scratch |= 0x04; } // Skip boot anim hack
   }
 
   // Create some timers for us
-  smc_dev->watchdog_timer = qemu_new_timer_ns(vm_clock, smc_watchdog_timer_cb, smc_dev);
-  smc_dev->led_timer = qemu_new_timer_ns(vm_clock, smc_led_timer_cb, smc_dev);
+  smc_dev->watchdog_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, smc_watchdog_timer_cb, smc_dev);
+  smc_dev->led_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, smc_led_timer_cb, smc_dev);
   
   // Start the LED timer
-  qemu_mod_timer_ns(smc_dev->led_timer, qemu_get_clock_ns(vm_clock));
+  timer_mod_ns(smc_dev->led_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
 
   // Request that we are informed about resets //FIXME: Why is this not part of the smbus device crap?
   qemu_register_reset(smbus_smc_reset,smc_dev);
