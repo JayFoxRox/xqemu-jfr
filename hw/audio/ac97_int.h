@@ -30,7 +30,7 @@ enum {
     PI_INDEX = 0,   /* PCM in */
     PO_INDEX,       /* PCM out */
     MC_INDEX,       /* Mic in */
-    SO_INDEX = 7,   /* SPDIF out */
+    SO_INDEX = 7,   /* SPDIF out - Xbox related?! */
     LAST_INDEX
 };
 
@@ -52,28 +52,26 @@ typedef struct AC97BusMasterRegs {
 } AC97BusMasterRegs;
 
 typedef struct AC97LinkState {
-    qemu_irq irq;
-    AddressSpace *as;
+    PCIDevice dev;
     QEMUSoundCard card;
-
+    uint32_t use_broken_id;
     uint32_t glob_cnt;
     uint32_t glob_sta;
     uint32_t cas; /* Codec Access Semaphore Register */
     uint32_t last_samp;
     AC97BusMasterRegs bm_regs[LAST_INDEX];
     uint8_t mixer_data[256];
-
     SWVoiceIn *voice_pi;
     SWVoiceOut *voice_po;
     SWVoiceIn *voice_mc;
     int invalid_freq[LAST_INDEX];
     uint8_t silence[128];
     int bup_flag;
+    MemoryRegion io_nam;
+    MemoryRegion io_nabm;
 } AC97LinkState;
 
-void ac97_common_init (AC97LinkState *s,
-                       qemu_irq irq,
-                       AddressSpace *as);
+void ac97_common_init (AC97LinkState *s);
 
 
 extern const MemoryRegionOps ac97_io_nam_ops;

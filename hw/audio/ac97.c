@@ -23,6 +23,8 @@
 #include "hw/pci/pci.h"
 #include "sysemu/dma.h"
 
+#include "ac97_int.h"
+
 enum {
     AC97_Reset                     = 0x00,
     AC97_Master_Volume_Mute        = 0x02,
@@ -134,43 +136,6 @@ enum {
     REC_PHONE
 };
 
-typedef struct BD {
-    uint32_t addr;
-    uint32_t ctl_len;
-} BD;
-
-typedef struct AC97BusMasterRegs {
-    uint32_t bdbar;             /* rw 0 */
-    uint8_t civ;                /* ro 0 */
-    uint8_t lvi;                /* rw 0 */
-    uint16_t sr;                /* rw 1 */
-    uint16_t picb;              /* ro 0 */
-    uint8_t piv;                /* ro 0 */
-    uint8_t cr;                 /* rw 0 */
-    unsigned int bd_valid;
-    BD bd;
-} AC97BusMasterRegs;
-
-typedef struct AC97LinkState {
-    PCIDevice dev;
-    QEMUSoundCard card;
-    uint32_t use_broken_id;
-    uint32_t glob_cnt;
-    uint32_t glob_sta;
-    uint32_t cas;
-    uint32_t last_samp;
-    AC97BusMasterRegs bm_regs[3];
-    uint8_t mixer_data[256];
-    SWVoiceIn *voice_pi;
-    SWVoiceOut *voice_po;
-    SWVoiceIn *voice_mc;
-    int invalid_freq[3];
-    uint8_t silence[128];
-    int bup_flag;
-    MemoryRegion io_nam;
-    MemoryRegion io_nabm;
-} AC97LinkState;
-
 enum {
     BUP_SET = 1,
     BUP_LAST = 2
@@ -192,13 +157,6 @@ enum {                                          \
     prefix ## _PIV = start + 10,                \
     prefix ## _CR = start + 11                  \
 }
-
-enum {
-    PI_INDEX = 0,
-    PO_INDEX,
-    MC_INDEX,
-    LAST_INDEX
-};
 
 MKREGS (PI, PI_INDEX * 16);
 MKREGS (PO, PO_INDEX * 16);
@@ -1218,7 +1176,7 @@ static const VMStateDescription vmstate_ac97 = {
         VMSTATE_UINT32 (glob_cnt, AC97LinkState),
         VMSTATE_UINT32 (glob_sta, AC97LinkState),
         VMSTATE_UINT32 (cas, AC97LinkState),
-        VMSTATE_STRUCT_ARRAY (bm_regs, AC97LinkState, 3, 1,
+        VMSTATE_STRUCT_ARRAY (bm_regs, AC97LinkState, LAST_INDEX, 1,
                               vmstate_ac97_bm_regs, AC97BusMasterRegs),
         VMSTATE_BUFFER (mixer_data, AC97LinkState),
         VMSTATE_UNUSED_TEST (is_version_2, 3),
@@ -1264,7 +1222,7 @@ static void nam_write(void *opaque, hwaddr addr, uint64_t val,
     }
 }
 
-static const MemoryRegionOps ac97_io_nam_ops = {
+const MemoryRegionOps ac97_io_nam_ops = {
     .read = nam_read,
     .write = nam_write,
     .impl = {
@@ -1313,7 +1271,7 @@ static void nabm_write(void *opaque, hwaddr addr, uint64_t val,
 }
 
 
-static const MemoryRegionOps ac97_io_nabm_ops = {
+const MemoryRegionOps ac97_io_nabm_ops = {
     .read = nabm_read,
     .write = nabm_write,
     .impl = {
@@ -1384,10 +1342,15 @@ static int ac97_initfn (PCIDevice *dev)
                            "ac97-nabm", 256);
     pci_register_bar (&s->dev, 0, PCI_BASE_ADDRESS_SPACE_IO, &s->io_nam);
     pci_register_bar (&s->dev, 1, PCI_BASE_ADDRESS_SPACE_IO, &s->io_nabm);
+    ac97_common_init(s);
+    return 0;
+}
+
+void ac97_common_init (AC97LinkState *s)
+{
     qemu_register_reset (ac97_on_reset, s);
     AUD_register_card ("ac97", &s->card);
     ac97_on_reset (s);
-    return 0;
 }
 
 static void ac97_exitfn (PCIDevice *dev)
@@ -1440,3 +1403,4 @@ static void ac97_register_types (void)
 }
 
 type_init (ac97_register_types)
+

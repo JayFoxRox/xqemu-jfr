@@ -22,15 +22,8 @@
 #include "hw/audio/ac97_int.h"
 
 typedef struct MCPXACIState {
-    PCIDevice dev;
-
-    AC97LinkState ac97;
-
-
-    MemoryRegion io_nam, io_nabm;
-
+    AC97LinkState ac97; /* Includes the PCIDevice */
     MemoryRegion mmio;
-    MemoryRegion nam_mmio, nabm_mmio;
 } MCPXACIState;
 
 
@@ -42,12 +35,15 @@ static int mcpx_aci_initfn(PCIDevice *dev)
 {
     MCPXACIState *d = MCPX_ACI_DEVICE(dev);
 
+    assert(&d->ac97.dev == dev);
+    assert(&d->ac97.dev == d);
+
     //mmio
     memory_region_init(&d->mmio, OBJECT(dev), "mcpx-aci-mmio", 0x1000);
 
-    memory_region_init_io(&d->io_nam, OBJECT(dev), &ac97_io_nam_ops, &d->ac97,
+    memory_region_init_io(&d->ac97.io_nam, OBJECT(dev), &ac97_io_nam_ops, &d->ac97,
                           "mcpx-aci-nam", 0x100);
-    memory_region_init_io(&d->io_nabm, OBJECT(dev), &ac97_io_nabm_ops, &d->ac97,
+    memory_region_init_io(&d->ac97.io_nabm, OBJECT(dev), &ac97_io_nabm_ops, &d->ac97,
                           "mcpx-aci-nabm", 0x80);
 
     /*pci_register_bar(&d->dev, 0, PCI_BASE_ADDRESS_SPACE_IO, &d->io_nam);
@@ -59,12 +55,12 @@ static int mcpx_aci_initfn(PCIDevice *dev)
     memory_region_init_alias(&d->nabm_mmio, NULL, &d->io_nabm, 0, 0x80);
     memory_region_add_subregion(&d->mmio, 0x100, &d->nabm_mmio);*/
 
-    memory_region_add_subregion(&d->mmio, 0x0, &d->io_nam);
-    memory_region_add_subregion(&d->mmio, 0x100, &d->io_nabm);
+    memory_region_add_subregion(&d->mmio, 0x0, &d->ac97.io_nam);
+    memory_region_add_subregion(&d->mmio, 0x100, &d->ac97.io_nabm);
 
-    pci_register_bar(&d->dev, 2, PCI_BASE_ADDRESS_SPACE_MEMORY, &d->mmio);
+    pci_register_bar(&d->ac97.dev, 2, PCI_BASE_ADDRESS_SPACE_MEMORY, &d->mmio);
 
-    ac97_common_init(&d->ac97, dev->irq[0], pci_get_address_space(&d->dev));
+    ac97_common_init(&d->ac97);
 
     return 0;
 }
