@@ -1174,6 +1174,11 @@ void memory_region_set_log(MemoryRegion *mr, bool log, unsigned client)
 bool memory_region_get_dirty(MemoryRegion *mr, hwaddr addr,
                              hwaddr size, unsigned client)
 {
+    if (mr->alias) {
+        return memory_region_get_dirty(mr->alias,
+                                       addr - mr->alias_offset,
+                                       size, client);
+    }
     assert(mr->terminates);
     return cpu_physical_memory_get_dirty(mr->ram_addr + addr, size, client);
 }
@@ -1237,6 +1242,11 @@ void memory_region_rom_device_set_romd(MemoryRegion *mr, bool romd_mode)
 void memory_region_reset_dirty(MemoryRegion *mr, hwaddr addr,
                                hwaddr size, unsigned client)
 {
+    if (mr->alias) {
+        return memory_region_reset_dirty(mr->alias,
+                                         addr - mr->alias_offset,
+                                         size, client);
+    }
     assert(mr->terminates);
     cpu_physical_memory_reset_dirty(mr->ram_addr + addr, size, client);
 }
