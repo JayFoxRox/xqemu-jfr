@@ -117,6 +117,32 @@ typedef struct SMBusSMCDevice {
 #define SMC_REG_INTEN               0x1a
 #define SMC_REG_SCRATCH             0x1b
 
+const char* register_names[] = {
+    [0x00 ... 0xFF] = NULL,
+#define SELF_STRING(s) [s] = #s
+    SELF_STRING(SMC_REG_VER),
+    SELF_STRING(SMC_REG_POWER),
+    SELF_STRING(SMC_REG_TRAYSTATE),
+    SELF_STRING(SMC_REG_AVPACK),
+    SELF_STRING(SMC_REG_FANMODE),
+    SELF_STRING(SMC_REG_FANSPEED),
+    SELF_STRING(SMC_REG_LEDMODE),
+    SELF_STRING(SMC_REG_LEDSEQ),
+    SELF_STRING(SMC_REG_CPUTEMP),
+    SELF_STRING(SMC_REG_BOARDTEMP),
+    SELF_STRING(SMC_REG_AUDIO_CLAMPING),
+    SELF_STRING(SMC_REG_TRAYEJECT),
+    SELF_STRING(SMC_REG_INTACK),
+    SELF_STRING(SMC_REG_ERROR_CODE),
+    SELF_STRING(SMC_REG_INTSTATUS),
+    SELF_STRING(SMC_REG_LAST_COMMAND),
+    SELF_STRING(SMC_REG_LAST_VALUE),
+    SELF_STRING(SMC_REG_RESETONEJECT),
+    SELF_STRING(SMC_REG_INTEN),
+    SELF_STRING(SMC_REG_SCRATCH)
+#undef SELF_STRING
+};
+
 // States used in the default mode
 #define LED_OFF 0x00
 #define LED_RED 0x0F
@@ -469,8 +495,9 @@ static void smc_write_data(SMBusDevice *dev, uint8_t cmd, uint8_t *buf, int len)
 {
     SMBusSMCDevice *smc = (SMBusSMCDevice *) dev;
 #ifdef DEBUG
-    printf("smc_write_byte: addr=0x%02x cmd=0x%02x val=0x%02x\n",
-           dev->i2c.address, cmd, buf[0]);
+    const char* cmd_string = register_names[cmd];
+    printf("smc_write_byte: addr=0x%02x cmd=0x%02x (%s) val=0x%02x\n",
+           dev->i2c.address, cmd, cmd_string?cmd_string:"", buf[0]);
 #endif
 
     assert(len == 1);
@@ -482,8 +509,9 @@ static uint8_t smc_read_data(SMBusDevice *dev, uint8_t cmd, int n)
 {
     SMBusSMCDevice *smc = (SMBusSMCDevice *) dev;
     #ifdef DEBUG
-        printf("smc_read_data: addr=0x%02x cmd=0x%02x n=%d\n",
-               dev->i2c.address, cmd, n);
+        const char* cmd_string = register_names[cmd];
+        printf("smc_read_data: addr=0x%02x cmd=0x%02x (%s) n=%d\n",
+               dev->i2c.address, cmd, cmd_string?cmd_string:"", n);
     #endif
     
     assert(n == 0);
