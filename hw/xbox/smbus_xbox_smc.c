@@ -101,8 +101,8 @@ typedef struct SMBusSMCDevice {
 #define SMC_REG_BOARDTEMP           0x0a
 #define SMC_REG_AUDIO_CLAMPING      0x0b
 #define SMC_REG_TRAYEJECT           0x0c
-#define SMC_REG_INTACK		0x0d
-#define SMC_REG_ERROR_CODE           0x0e
+#define SMC_REG_INTACK              0x0d
+#define SMC_REG_ERROR_CODE          0x0e
 #define SMC_REG_INTSTATUS           0x11
 #define		SMC_REG_INTSTATUS_POWER		0x01
 #define		SMC_REG_INTSTATUS_TRAYCLOSED	0x02
