@@ -311,6 +311,8 @@
 #define NV_PGRAPH_COMBINECTL                             0x00001940
 #define NV_PGRAPH_COMBINESPECFOG0                        0x00001944
 #define NV_PGRAPH_COMBINESPECFOG1                        0x00001948
+#define NV_PGRAPH_CONTROL_1                              0x00001950
+#       define NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE             0xFF000000
 #define NV_PGRAPH_SHADERCTL                              0x00001998
 #define NV_PGRAPH_SHADERPROG                             0x0000199C
 #define NV_PGRAPH_SPECFOGFACTOR0                         0x000019AC
@@ -509,6 +511,19 @@
 #   define NV097_SET_COMBINER_SPECULAR_FOG_CW0                0x00970288
 #   define NV097_SET_COMBINER_SPECULAR_FOG_CW1                0x0097028C
 #   define NV097_SET_COLOR_MASK                               0x00970358
+#       define NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE            0xFF000000
+#           define NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE_FALSE           0x00
+#           define NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE_TRUE            0x01
+#       define NV097_SET_COLOR_MASK_RED_WRITE_ENABLE              0x00FF0000
+#           define NV097_SET_COLOR_MASK_RED_WRITE_ENABLE_FALSE             0x00
+#           define NV097_SET_COLOR_MASK_RED_WRITE_ENABLE_TRUE              0x01
+#       define NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE            0x0000FF00
+#           define NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE_FALSE           0x00
+#           define NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE_TRUE            0x01
+#       define NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE             0x000000FF
+#           define NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE_FALSE            0x00
+#           define NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE_TRUE             0x01
+#   define NV097_SET_STENCIL_MASK                             0x00970360
 #   define NV097_SET_CLIP_MIN                                 0x00970394
 #   define NV097_SET_CLIP_MAX                                 0x00970398
 #   define NV097_SET_COMPOSITE_MATRIX                         0x00970680
@@ -601,13 +616,14 @@
 #   define NV097_SET_ZSTENCIL_CLEAR_VALUE                     0x00971D8C
 #   define NV097_SET_COLOR_CLEAR_VALUE                        0x00971D90
 #   define NV097_CLEAR_SURFACE                                0x00971D94
+#       define NV097_CLEAR_SURFACE_ZETA                           0x00000003
 #       define NV097_CLEAR_SURFACE_Z                              (1 << 0)
 #       define NV097_CLEAR_SURFACE_STENCIL                        (1 << 1)
 #       define NV097_CLEAR_SURFACE_COLOR                          0x000000F0
-#       define NV097_CLEAR_SURFACE_R                                (1 << 4)
-#       define NV097_CLEAR_SURFACE_G                                (1 << 5)
-#       define NV097_CLEAR_SURFACE_B                                (1 << 6)
-#       define NV097_CLEAR_SURFACE_A                                (1 << 7)
+#       define NV097_CLEAR_SURFACE_R                              (1 << 4)
+#       define NV097_CLEAR_SURFACE_G                              (1 << 5)
+#       define NV097_CLEAR_SURFACE_B                              (1 << 6)
+#       define NV097_CLEAR_SURFACE_A                              (1 << 7)
 #   define NV097_SET_CLEAR_RECT_HORIZONTAL                    0x00971D98
 #   define NV097_SET_CLEAR_RECT_VERTICAL                      0x00971D9C
 #   define NV097_SET_SPECULAR_FOG_FACTOR                      0x00971E20
@@ -1008,7 +1024,6 @@ typedef struct KelvinState {
     InlineVertexBufferEntry inline_buffer[NV2A_GPU_MAX_BATCH_LENGTH];
 
     uint32_t shade_mode;
-    bool depth_mask;
 
     bool alpha_test_enable;
     bool blend_enable;
@@ -1102,6 +1117,7 @@ typedef struct PGRAPHState {
     unsigned int surface_x, surface_y;
     unsigned int surface_width, surface_height;
     uint32_t color_mask;
+    bool depth_mask;
 
     hwaddr dma_a, dma_b;
     Texture textures[NV2A_GPU_MAX_TEXTURES];
@@ -1270,6 +1286,31 @@ typedef struct NV2A_GPUState {
 #define NV2A_GPU_DEVICE(obj) \
     OBJECT_CHECK(NV2A_GPUState, (obj), "nv2a")
 
+/* new style (work in function) so we can easily restore the state anytime */
+
+void update_gl_color_mask(PGRAPHState* pg) {
+    uint8_t mask_alpha = GET_MASK(pg->color_mask, NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE);
+    uint8_t mask_red = GET_MASK(pg->color_mask, NV097_SET_COLOR_MASK_RED_WRITE_ENABLE);
+    uint8_t mask_green = GET_MASK(pg->color_mask, NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE);
+    uint8_t mask_blue = GET_MASK(pg->color_mask, NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE);
+    /* XXX: What happens if mask_* is not 0x00 or 0x01? */
+    glColorMask(mask_red==0x00?GL_FALSE:GL_TRUE,
+                mask_green==0x00?GL_FALSE:GL_TRUE,
+                mask_blue==0x00?GL_FALSE:GL_TRUE,
+                mask_alpha==0x00?GL_FALSE:GL_TRUE);
+}
+
+void update_gl_stencil_mask(PGRAPHState* pg) {
+    GLuint gl_mask = GET_MASK(pg->regs[NV_PGRAPH_CONTROL_1],
+                              NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE);
+    glStencilMask(gl_mask);
+}
+
+void update_gl_depth_mask(PGRAPHState* pg) {
+    glDepthMask(pg->depth_mask?GL_TRUE:GL_FALSE);
+}
+
+/* old style (work in parameter) */
 
 static inline void set_gl_state(GLenum cap, bool state)
 {
@@ -2373,6 +2414,7 @@ static void pgraph_bind_shaders(PGRAPHState *pg)
 
 static void pgraph_update_surface(NV2A_GPUState *d, bool upload)
 {
+    /* FIXME: Needs support for stencil and depth bits */
     if (d->pgraph.surface_color.format != 0 && d->pgraph.color_mask
         && (upload || d->pgraph.surface_color.draw_dirty)) {
 
@@ -2911,6 +2953,16 @@ static void pgraph_method(NV2A_GPUState *d,
 
     case NV097_SET_COLOR_MASK:
         pg->color_mask = parameter;
+        update_gl_color_mask(pg);
+        break;
+    case NV097_SET_STENCIL_MASK:
+        SET_MASK(pg->regs[NV_PGRAPH_CONTROL_1],
+                 NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE, parameter);
+        update_gl_stencil_mask(pg);
+        break;
+    case NV097_SET_DEPTH_MASK:
+        pg->depth_mask = parameter;
+        update_gl_depth_mask(pg);
         break;
 
     case NV097_SET_CLIP_MIN:
@@ -3338,18 +3390,16 @@ static void pgraph_method(NV2A_GPUState *d,
         NV2A_GPU_DPRINTF("------------------CLEAR 0x%x---------------\n", parameter);
         //glClearColor(1, 0, 0, 1);
 
+        if (!(parameter &
+            (NV097_CLEAR_SURFACE_COLOR | NV097_CLEAR_SURFACE_ZETA))) {
+            break;
+        }
+
         GLbitfield gl_mask = 0;
-        if (parameter & NV097_CLEAR_SURFACE_Z) {
-            gl_mask |= GL_DEPTH_BUFFER_BIT;
-        }
-        if (parameter & NV097_CLEAR_SURFACE_STENCIL) {
-            gl_mask |= GL_STENCIL_BUFFER_BIT;
-        }
 
-        if (parameter & (NV097_CLEAR_SURFACE_COLOR)) {
-            gl_mask |= GL_COLOR_BUFFER_BIT;
-            pgraph_update_surface(d, true);
+        pgraph_update_surface(d, true);
 
+        if (parameter & NV097_CLEAR_SURFACE_COLOR) {
             uint32_t clear_zstencil = d->pgraph.regs[NV_PGRAPH_ZSTENCILCLEARVALUE];
             GLint gl_clear_stencil;
             GLdouble gl_clear_depth;
@@ -3365,10 +3415,29 @@ static void pgraph_method(NV2A_GPUState *d,
                 default:
                     assert(0);
             }
-            glClearDepth(gl_clear_depth);
-            glClearStencil(gl_clear_stencil);
+
+            if (parameter & NV097_CLEAR_SURFACE_Z) {
+                gl_mask |= GL_DEPTH_BUFFER_BIT;
+                glDepthMask(GL_TRUE);
+                glClearDepth(gl_clear_depth);
+            }
+            if (parameter & NV097_CLEAR_SURFACE_STENCIL) {
+                gl_mask |= GL_STENCIL_BUFFER_BIT;
+                glStencilMask(0xFF); /* We have 8 bits maximum anyway */
+                glClearStencil(gl_clear_stencil);
+            }
+        }
+
+        if (parameter & NV097_CLEAR_SURFACE_COLOR) {
+            gl_mask |= GL_COLOR_BUFFER_BIT;
 
             uint32_t clear_color = d->pgraph.regs[NV_PGRAPH_COLORCLEARVALUE];
+
+            glColorMask((parameter & NV097_CLEAR_SURFACE_R)?GL_TRUE:GL_FALSE,
+                        (parameter & NV097_CLEAR_SURFACE_G)?GL_TRUE:GL_FALSE,
+                        (parameter & NV097_CLEAR_SURFACE_B)?GL_TRUE:GL_FALSE,
+                        (parameter & NV097_CLEAR_SURFACE_A)?GL_TRUE:GL_FALSE);
+
             glClearColor( ((clear_color >> 16) & 0xFF) / 255.0f, /* red */
                           ((clear_color >> 8) & 0xFF) / 255.0f,  /* green */
                           (clear_color & 0xFF) / 255.0f,         /* blue */
@@ -3391,17 +3460,17 @@ static void pgraph_method(NV2A_GPUState *d,
         NV2A_GPU_DPRINTF("------------------CLEAR 0x%x %d,%d - %d,%d  %x---------------\n",
             parameter, xmin, ymin, xmax, ymax, d->pgraph.regs[NV_PGRAPH_COLORCLEARVALUE]);
 
-        /* The NV2A clear is just a glorified memset, so clear masks */
-        glDepthMask(GL_TRUE);
         glClear(gl_mask);
-        glDepthMask(kelvin->depth_mask?GL_TRUE:GL_FALSE);
+
+        /* The NV2A clear is just a glorified memset so we cleared masks.
+           Restore the actual masks */
+        update_gl_depth_mask(pg);
+        update_gl_stencil_mask(pg);
+        update_gl_color_mask(pg);
 
         glDisable(GL_SCISSOR_TEST);
 
-
-        if (parameter & NV097_CLEAR_SURFACE_COLOR) {
-            pg->surface_color.draw_dirty = true;
-        }
+        pg->surface_color.draw_dirty = true;
         break;
 
     case NV097_SET_CLEAR_RECT_HORIZONTAL:
@@ -3484,9 +3553,7 @@ static void pgraph_method(NV2A_GPUState *d,
             glShadeModel(gl_mode);
         }
         break;
-    case NV097_SET_DEPTH_MASK:
-        glDepthMask((kelvin->depth_mask = parameter)?GL_TRUE:GL_FALSE);
-        break;
+
     case NV097_SET_ALPHA_TEST_ENABLE:
         set_gl_state(GL_ALPHA_TEST,kelvin->alpha_test_enable = parameter);
         break;
