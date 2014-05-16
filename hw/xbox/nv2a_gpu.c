@@ -3399,7 +3399,7 @@ static void pgraph_method(NV2A_GPUState *d,
 
         pgraph_update_surface(d, true);
 
-        if (parameter & NV097_CLEAR_SURFACE_COLOR) {
+        if (parameter & NV097_CLEAR_SURFACE_ZETA) {
             uint32_t clear_zstencil = d->pgraph.regs[NV_PGRAPH_ZSTENCILCLEARVALUE];
             GLint gl_clear_stencil;
             GLdouble gl_clear_depth;
