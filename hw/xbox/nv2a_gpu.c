@@ -91,6 +91,37 @@
 #define NV_PBUS_PCI_NV_2                                 0x00000808
 #   define NV_PBUS_PCI_NV_2_REVISION_ID                       0x000000FF
 #   define NV_PBUS_PCI_NV_2_CLASS_CODE                        0xFFFFFF00
+#define NV_PBUS_PCI_NV_3                                 0x0000080C
+#   define NV_PBUS_PCI_NV_3_LATENCY_TIMER                     0x0000F800
+#   define NV_PBUS_PCI_NV_3_HEADER_TYPE                       0x00FF0000
+#define NV_PBUS_PCI_NV_4                                 0x00000810
+#   define NV_PBUS_PCI_NV_4_SPACE_TYPE                        0x00000001
+#   define NV_PBUS_PCI_NV_4_ADDRESS_TYPE                      0x00000006
+#   define NV_PBUS_PCI_NV_4_PREFETCHABLE                      0x00000008
+#   define NV_PBUS_PCI_NV_4_BASE_ADDRESS                      0xFF000000
+#define NV_PBUS_PCI_NV_5                                 0x00000814
+#   define NV_PBUS_PCI_NV_5_SPACE_TYPE                        0x00000001
+#   define NV_PBUS_PCI_NV_5_ADDRESS_TYPE                      0x00000006
+#   define NV_PBUS_PCI_NV_5_PREFETCHABLE                      0x00000008
+#   define NV_PBUS_PCI_NV_5_BASE_ADDRESS                      0xFF000000
+#define NV_PBUS_PCI_NV_6                                 0x00000818
+#   define NV_PBUS_PCI_NV_6_SPACE_TYPE                        0x00000001
+#   define NV_PBUS_PCI_NV_6_ADDRESS_TYPE                      0x00000006
+#   define NV_PBUS_PCI_NV_6_PREFETCHABLE                      0x00000008
+#   define NV_PBUS_PCI_NV_6_BASE_ADDRESS                      0xFFF80000
+#define NV_PBUS_PCI_NV_11                                0x0000082C
+#   define NV_PBUS_PCI_NV_11_SUBSYSTEM_VENDOR_ID             0x0000FFFF
+#   define NV_PBUS_PCI_NV_11_SUBSYSTEM_ID                    0xFFFF0000
+#define NV_PBUS_PCI_NV_12                                0x00000830
+#   define NV_PBUS_PCI_NV_12_ROM_DECODE                      0x00000001
+#   define NV_PBUS_PCI_NV_12_ROM_BASE                        0xFFFF0000
+#define NV_PBUS_PCI_NV_13                                0x00000834
+#   define NV_PBUS_PCI_NV_13_CAP_PTR                         0x000000FF
+#define NV_PBUS_PCI_NV_15                                0x0000083C
+#   define NV_PBUS_PCI_NV_15_INTR_LINE                       0x000000FF
+#   define NV_PBUS_PCI_NV_15_INTR_PIN                        0x0000FF00
+#   define NV_PBUS_PCI_NV_15_MIN_GNT                         0x00FF0000
+#   define NV_PBUS_PCI_NV_15_MAX_LAT                         0xFF000000
 
 
 #define NV_PFIFO_INTR_0                                  0x00000100
@@ -3861,6 +3892,33 @@ static uint64_t pbus_read(void *opaque,
     case NV_PBUS_PCI_NV_2:
         r = pci_get_long(d->dev.config + PCI_CLASS_REVISION);
         break;
+    case NV_PBUS_PCI_NV_3:
+        r = pci_get_long(d->dev.config + PCI_CACHE_LINE_SIZE);
+        break;
+    case NV_PBUS_PCI_NV_4:
+        r = pci_get_long(d->dev.config + PCI_BASE_ADDRESS_0);
+        break;
+    case NV_PBUS_PCI_NV_5:
+        r = pci_get_long(d->dev.config + PCI_BASE_ADDRESS_1);
+        break;
+    case NV_PBUS_PCI_NV_6:
+        r = pci_get_long(d->dev.config + PCI_BASE_ADDRESS_2);
+        break;
+    /* XXX: .. */
+    case NV_PBUS_PCI_NV_11:
+        r = pci_get_long(d->dev.config + PCI_SUBSYSTEM_VENDOR_ID);
+        break;
+    case NV_PBUS_PCI_NV_12:
+        r = pci_get_long(d->dev.config + PCI_ROM_ADDRESS);
+        break;
+    case NV_PBUS_PCI_NV_13:
+        r = pci_get_long(d->dev.config + PCI_CAPABILITY_LIST);
+        break;
+    /* XXX: .. */
+    case NV_PBUS_PCI_NV_15:
+        r = pci_get_long(d->dev.config + PCI_INTERRUPT_LINE);
+        break;
+    /* XXX: .. */
     default:
         break;
     }
@@ -3876,9 +3934,45 @@ static void pbus_write(void *opaque, hwaddr addr,
     reg_log_write(NV_PBUS, addr, val);
 
     switch (addr) {
+    case NV_PBUS_PCI_NV_0:
+        /* Read only */
+        break;
     case NV_PBUS_PCI_NV_1:
         pci_set_long(d->dev.config + PCI_COMMAND, val);
         break;
+    case NV_PBUS_PCI_NV_2:
+        /* Read only */
+        break;
+    case NV_PBUS_PCI_NV_3:
+        pci_set_long(d->dev.config + PCI_CACHE_LINE_SIZE, val);
+        break;
+    case NV_PBUS_PCI_NV_4:
+        /* XXX: Align to 16MB? */
+        pci_set_long(d->dev.config + PCI_BASE_ADDRESS_0, val);
+        break;
+    case NV_PBUS_PCI_NV_5:
+        /* XXX: Align to 16MB? */
+        pci_set_long(d->dev.config + PCI_BASE_ADDRESS_1, val);
+        break;
+    case NV_PBUS_PCI_NV_6:
+        /* XXX: Align to 512kB? This is masked differently than NV_4 and NV_5! */
+        pci_set_long(d->dev.config + PCI_BASE_ADDRESS_2, val);
+        break;
+    /* XXX: .. */
+    case NV_PBUS_PCI_NV_11:
+        /* Read only */
+        break;
+    case NV_PBUS_PCI_NV_12:
+        pci_set_long(d->dev.config + PCI_ROM_ADDRESS, val);
+        break;
+    case NV_PBUS_PCI_NV_13:
+        pci_set_long(d->dev.config + PCI_CAPABILITY_LIST, val);
+        break;
+    /* XXX: .. */
+    case NV_PBUS_PCI_NV_15:
+        pci_set_long(d->dev.config + PCI_INTERRUPT_LINE, val);
+        break;
+    /* XXX: .. */
     default:
         break;
     }
@@ -5238,7 +5332,8 @@ static int nv2a_gpu_initfn(PCIDevice *dev)
     d->pramdac.memory_clock_coeff = 0;
     d->pramdac.video_clock_coeff = 0x0003C20D; /* 25182Khz...? */
 
-
+    /* Setup IRQ */
+    pci_set_byte(d->dev.config + PCI_INTERRUPT_PIN, 0x01); /* XXX: Why isn't this overwritten by the driver? */
 
     /* legacy VGA shit */
     VGACommonState *vga = &d->vga;
