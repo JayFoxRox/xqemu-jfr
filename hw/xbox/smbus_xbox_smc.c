@@ -575,10 +575,14 @@ static int smbus_smc_init(SMBusDevice *dev)
   smc_dev->interrupts_enabled = false;
 
   // Set scratch register
-  smc_dev->scratch = 0x00;
-  //FIXME: Remove or make an option
+  if (machine_opts) {
+    smc_dev->scratch = qemu_opt_get_number(machine_opts, "xbox_smc_scratch", 0x00); /* FIXME: use booleans for flags? */
+  } else {
+    smc_dev->scratch = 0x00;
+  }
+  /* FIXME: Remove this once I integrated these flags into the launcher.. */
   if (0) {
-    if (1) { smc_dev->scratch |= 0x02; } // Display fatal error
+    if (0) { smc_dev->scratch |= 0x02; } // Display fatal error
     if (1) { smc_dev->scratch |= 0x04; } // Skip boot anim hack
   }
 
