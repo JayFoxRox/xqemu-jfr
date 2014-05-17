@@ -1186,6 +1186,11 @@ bool memory_region_get_dirty(MemoryRegion *mr, hwaddr addr,
 void memory_region_set_dirty(MemoryRegion *mr, hwaddr addr,
                              hwaddr size)
 {
+    if (mr->alias) {
+        return memory_region_set_dirty(mr->alias,
+                                       addr - mr->alias_offset,
+                                       size);
+    }
     assert(mr->terminates);
     cpu_physical_memory_set_dirty_range(mr->ram_addr + addr, size);
 }
