@@ -34,7 +34,7 @@ typedef struct MCPXACIState {
 static int mcpx_aci_initfn(PCIDevice *dev)
 {
     MCPXACIState *d = MCPX_ACI_DEVICE(dev);
-
+//return 0;
     assert(&d->ac97.dev == dev);
     assert(&d->ac97.dev == d);
 
@@ -46,19 +46,43 @@ static int mcpx_aci_initfn(PCIDevice *dev)
     memory_region_init_io(&d->ac97.io_nabm, OBJECT(dev), &ac97_io_nabm_ops, &d->ac97,
                           "mcpx-aci-nabm", 0x80);
 
-    /*pci_register_bar(&d->dev, 0, PCI_BASE_ADDRESS_SPACE_IO, &d->io_nam);
-    pci_register_bar(&d->dev, 1, PCI_BASE_ADDRESS_SPACE_IO, &d->io_nabm);
-
+#if 1
+#if 0
+  // Works?! Maybe also no AC97 detected..
+    pci_register_bar(&d->ac97.dev, 0, PCI_BASE_ADDRESS_SPACE_IO, &d->ac97.io_nam);
+    pci_register_bar(&d->ac97.dev, 1, PCI_BASE_ADDRESS_SPACE_IO, &d->ac97.io_nabm);
+#endif
+#if 0
     memory_region_init_alias(&d->nam_mmio, NULL, &d->io_nam, 0, 0x100);
     memory_region_add_subregion(&d->mmio, 0x0, &d->nam_mmio);
 
     memory_region_init_alias(&d->nabm_mmio, NULL, &d->io_nabm, 0, 0x80);
     memory_region_add_subregion(&d->mmio, 0x100, &d->nabm_mmio);*/
+#endif
 
+  // Original code which worked pre-2.0.0 or 1.7.0 but fails?!
     memory_region_add_subregion(&d->mmio, 0x0, &d->ac97.io_nam);
     memory_region_add_subregion(&d->mmio, 0x100, &d->ac97.io_nabm);
 
     pci_register_bar(&d->ac97.dev, 2, PCI_BASE_ADDRESS_SPACE_MEMORY, &d->mmio);
+#endif
+
+uint8_t* c = d->ac97.dev.config;
+printf("c[PCI_INTERRUPT_PIN] = 0x%X\n",c[PCI_INTERRUPT_PIN]);
+printf("c[PCI_VENDOR_ID] = 0x%X\n",c[PCI_VENDOR_ID]);
+#if 1
+    c[PCI_INTERRUPT_PIN] = 0x01;
+    c[PCI_INTERRUPT_LINE] = 0x06;
+/*
+    c[PCI_COMMAND] = 0x00;      //pcicmd pci command rw, ro 
+    c[PCI_COMMAND + 1] = 0x00;
+
+    c[PCI_STATUS] = PCI_STATUS_FAST_BACK;      //pcists pci status rwc, ro
+    c[PCI_STATUS + 1] = PCI_STATUS_DEVSEL_MEDIUM >> 8;
+
+    c[PCI_CLASS_PROG] = 0x00;      // pi programming interface ro
+*/
+#endif
 
     ac97_common_init(&d->ac97);
 
