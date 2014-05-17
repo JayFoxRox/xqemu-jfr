@@ -429,6 +429,8 @@ static int mcpx_apu_initfn(PCIDevice *dev)
 
     d->se.frame_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL, se_frame, d);
 
+    dev->config[PCI_INTERRUPT_PIN] = 0x01;
+
     return 0;
 }
 
