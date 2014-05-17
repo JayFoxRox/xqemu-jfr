@@ -161,6 +161,7 @@ enum {                                          \
 MKREGS (PI, PI_INDEX * 16);
 MKREGS (PO, PO_INDEX * 16);
 MKREGS (MC, MC_INDEX * 16);
+MKREGS (SO, SO_INDEX * 16);
 
 enum {
     GLOB_CNT = 0x2c,
@@ -173,6 +174,7 @@ enum {
 static void po_callback (void *opaque, int free);
 static void pi_callback (void *opaque, int avail);
 static void mc_callback (void *opaque, int avail);
+static void so_callback (void *opaque, int free);
 
 static void warm_reset (AC97LinkState *s)
 {
@@ -360,6 +362,17 @@ static void open_voice (AC97LinkState *s, int index, int freq)
                 &as
                 );
             break;
+
+        case SO_INDEX:
+            s->voice_so = AUD_open_out (
+                &s->card,
+                s->voice_so,
+                "ac97.so",
+                s,
+                so_callback,
+                &as
+                );
+            break;
         }
     }
     else {
@@ -378,6 +391,11 @@ static void open_voice (AC97LinkState *s, int index, int freq)
         case MC_INDEX:
             AUD_close_in (&s->card, s->voice_mc);
             s->voice_mc = NULL;
+            break;
+
+        case SO_INDEX:
+            AUD_close_out (&s->card, s->voice_so);
+            s->voice_so = NULL;
             break;
         }
     }
@@ -398,6 +416,12 @@ static void reset_voices (AC97LinkState *s, uint8_t active[LAST_INDEX])
     freq = mixer_load (s, AC97_MIC_ADC_Rate);
     open_voice (s, MC_INDEX, freq);
     AUD_set_active_in (s->voice_mc, active[MC_INDEX]);
+
+#if 0
+    freq = mixer_load (s, FIXME);
+    open_voice (s, SO_INDEX, freq);
+    AUD_set_active_out (s->voice_so, active[SO_INDEX]);
+#endif
 }
 
 static void get_volume (uint16_t vol, uint16_t mask, int inverse,
@@ -595,6 +619,7 @@ static void nam_writew (void *opaque, uint32_t addr, uint32_t val)
             mixer_store (s, AC97_MIC_ADC_Rate, 0xbb80);
             open_voice (s, MC_INDEX, 48000);
         }
+        //FIXME!!! SO..
         dolog ("Setting extended audio control to %#x\n", val);
         mixer_store (s, AC97_Extended_Audio_Ctrl_Stat, val);
         break;
@@ -610,6 +635,7 @@ static void nam_writew (void *opaque, uint32_t addr, uint32_t val)
                    val);
         }
         break;
+    //FIXME: !!! SO..
     case AC97_MIC_ADC_Rate:
         if (mixer_load (s, AC97_Extended_Audio_Ctrl_Stat) & EACS_VRM) {
             mixer_store (s, index, val);
@@ -684,6 +710,7 @@ static uint32_t nabm_readb (void *opaque, uint32_t addr)
     case PI_CIV:
     case PO_CIV:
     case MC_CIV:
+    case SO_CIV:
         r = &s->bm_regs[GET_BM (index)];
         val = r->civ;
         dolog ("CIV[%d] -> %#x\n", GET_BM (index), val);
@@ -691,6 +718,7 @@ static uint32_t nabm_readb (void *opaque, uint32_t addr)
     case PI_LVI:
     case PO_LVI:
     case MC_LVI:
+    case SO_LVI:
         r = &s->bm_regs[GET_BM (index)];
         val = r->lvi;
         dolog ("LVI[%d] -> %#x\n", GET_BM (index), val);
@@ -698,6 +726,7 @@ static uint32_t nabm_readb (void *opaque, uint32_t addr)
     case PI_PIV:
     case PO_PIV:
     case MC_PIV:
+    case SO_PIV:
         r = &s->bm_regs[GET_BM (index)];
         val = r->piv;
         dolog ("PIV[%d] -> %#x\n", GET_BM (index), val);
@@ -705,6 +734,7 @@ static uint32_t nabm_readb (void *opaque, uint32_t addr)
     case PI_CR:
     case PO_CR:
     case MC_CR:
+    case SO_CR:
         r = &s->bm_regs[GET_BM (index)];
         val = r->cr;
         dolog ("CR[%d] -> %#x\n", GET_BM (index), val);
@@ -712,6 +742,7 @@ static uint32_t nabm_readb (void *opaque, uint32_t addr)
     case PI_SR:
     case PO_SR:
     case MC_SR:
+    case SO_SR:
         r = &s->bm_regs[GET_BM (index)];
         val = r->sr & 0xff;
         dolog ("SRb[%d] -> %#x\n", GET_BM (index), val);
@@ -734,6 +765,7 @@ static uint32_t nabm_readw (void *opaque, uint32_t addr)
     case PI_SR:
     case PO_SR:
     case MC_SR:
+    case SO_SR:
         r = &s->bm_regs[GET_BM (index)];
         val = r->sr;
         dolog ("SR[%d] -> %#x\n", GET_BM (index), val);
@@ -741,6 +773,7 @@ static uint32_t nabm_readw (void *opaque, uint32_t addr)
     case PI_PICB:
     case PO_PICB:
     case MC_PICB:
+    case SO_PICB:
         r = &s->bm_regs[GET_BM (index)];
         val = r->picb;
         dolog ("PICB[%d] -> %#x\n", GET_BM (index), val);
@@ -763,6 +796,7 @@ static uint32_t nabm_readl (void *opaque, uint32_t addr)
     case PI_BDBAR:
     case PO_BDBAR:
     case MC_BDBAR:
+    case SO_BDBAR:
         r = &s->bm_regs[GET_BM (index)];
         val = r->bdbar;
         dolog ("BMADDR[%d] -> %#x\n", GET_BM (index), val);
@@ -770,6 +804,7 @@ static uint32_t nabm_readl (void *opaque, uint32_t addr)
     case PI_CIV:
     case PO_CIV:
     case MC_CIV:
+    case SO_CIV:
         r = &s->bm_regs[GET_BM (index)];
         val = r->civ | (r->lvi << 8) | (r->sr << 16);
         dolog ("CIV LVI SR[%d] -> %#x, %#x, %#x\n", GET_BM (index),
@@ -778,6 +813,7 @@ static uint32_t nabm_readl (void *opaque, uint32_t addr)
     case PI_PICB:
     case PO_PICB:
     case MC_PICB:
+    case SO_PICB:
         r = &s->bm_regs[GET_BM (index)];
         val = r->picb | (r->piv << 16) | (r->cr << 24);
         dolog ("PICB PIV CR[%d] -> %#x %#x %#x %#x\n", GET_BM (index),
@@ -811,6 +847,7 @@ static void nabm_writeb (void *opaque, uint32_t addr, uint32_t val)
     case PI_LVI:
     case PO_LVI:
     case MC_LVI:
+    case SO_LVI:
         r = &s->bm_regs[GET_BM (index)];
         if ((r->cr & CR_RPBM) && (r->sr & SR_DCH)) {
             r->sr &= ~(SR_DCH | SR_CELV);
@@ -824,6 +861,7 @@ static void nabm_writeb (void *opaque, uint32_t addr, uint32_t val)
     case PI_CR:
     case PO_CR:
     case MC_CR:
+    case SO_CR:
         r = &s->bm_regs[GET_BM (index)];
         if (val & CR_RR) {
             reset_bm_regs (s, r);
@@ -847,6 +885,7 @@ static void nabm_writeb (void *opaque, uint32_t addr, uint32_t val)
     case PI_SR:
     case PO_SR:
     case MC_SR:
+    case SO_SR:
         r = &s->bm_regs[GET_BM (index)];
         r->sr |= val & ~(SR_RO_MASK | SR_WCLEAR_MASK);
         update_sr (s, r, r->sr & ~(val & SR_WCLEAR_MASK));
@@ -867,6 +906,7 @@ static void nabm_writew (void *opaque, uint32_t addr, uint32_t val)
     case PI_SR:
     case PO_SR:
     case MC_SR:
+    case SO_SR:
         r = &s->bm_regs[GET_BM (index)];
         r->sr |= val & ~(SR_RO_MASK | SR_WCLEAR_MASK);
         update_sr (s, r, r->sr & ~(val & SR_WCLEAR_MASK));
@@ -887,6 +927,7 @@ static void nabm_writel (void *opaque, uint32_t addr, uint32_t val)
     case PI_BDBAR:
     case PO_BDBAR:
     case MC_BDBAR:
+    case SO_BDBAR:
         r = &s->bm_regs[GET_BM (index)];
         r->bdbar = val & ~3;
         dolog ("BDBAR[%d] <- %#x (bdbar %#x)\n",
@@ -1036,6 +1077,7 @@ static void transfer_audio (AC97LinkState *s, int index, int elapsed)
         if (r->cr & CR_RPBM) {
             switch (index) {
             case PO_INDEX:
+            case SO_INDEX:
                 write_bup (s, elapsed);
                 break;
             }
@@ -1068,6 +1110,7 @@ static void transfer_audio (AC97LinkState *s, int index, int elapsed)
 
         switch (index) {
         case PO_INDEX:
+        case SO_INDEX:
             temp = write_audio (s, r, elapsed, &stop);
             elapsed -= temp;
             r->picb -= (temp >> 1);
@@ -1121,6 +1164,11 @@ static void po_callback (void *opaque, int free)
     transfer_audio (opaque, PO_INDEX, free);
 }
 
+static void so_callback (void *opaque, int free)
+{
+    transfer_audio (opaque, SO_INDEX, free);
+}
+
 static const VMStateDescription vmstate_ac97_bm_regs = {
     .name = "ac97_bm_regs",
     .version_id = 1,
@@ -1157,6 +1205,7 @@ static int ac97_post_load (void *opaque, int version_id)
     active[PI_INDEX] = !!(s->bm_regs[PI_INDEX].cr & CR_RPBM);
     active[PO_INDEX] = !!(s->bm_regs[PO_INDEX].cr & CR_RPBM);
     active[MC_INDEX] = !!(s->bm_regs[MC_INDEX].cr & CR_RPBM);
+    active[SO_INDEX] = !!(s->bm_regs[SO_INDEX].cr & CR_RPBM);
     reset_voices (s, active);
 
     s->bup_flag = 0;
@@ -1309,9 +1358,10 @@ static void ac97_on_reset (void *opaque)
 {
     AC97LinkState *s = opaque;
 
-    reset_bm_regs (s, &s->bm_regs[0]);
-    reset_bm_regs (s, &s->bm_regs[1]);
-    reset_bm_regs (s, &s->bm_regs[2]);
+    reset_bm_regs (s, &s->bm_regs[PI_INDEX]);
+    reset_bm_regs (s, &s->bm_regs[PO_INDEX]);
+    reset_bm_regs (s, &s->bm_regs[MC_INDEX]);
+    reset_bm_regs (s, &s->bm_regs[SO_INDEX]);
 
     /*
      * Reset the mixer too. The Windows XP driver seems to rely on
