@@ -262,8 +262,12 @@ static void voice_set_active (AC97LinkState *s, int bm_index, int on)
         AUD_set_active_in (s->voice_mc, on);
         break;
 
+    case SO_INDEX:
+        AUD_set_active_out (s->voice_so, on);
+        break;
+
     default:
-        AUD_log ("ac97", "invalid bm_index(%d) in voice_set_active", bm_index);
+        AUD_log ("ac97", "invalid bm_index(%d) in voice_set_active\n", bm_index);
         break;
     }
 }
@@ -1186,7 +1190,12 @@ static const VMStateDescription vmstate_ac97 = {
 
 static uint64_t nam_read(void *opaque, hwaddr addr, unsigned size)
 {
-    if ((addr / size) > 256) {
+
+    dolog("nam_read [0x%llx] (%d)\n", addr, size);
+
+    AC97LinkState *s = opaque;
+
+    if (addr >= memory_region_size(&s->io_nam)) {
         return -1;
     }
 
@@ -1205,7 +1214,12 @@ static uint64_t nam_read(void *opaque, hwaddr addr, unsigned size)
 static void nam_write(void *opaque, hwaddr addr, uint64_t val,
                       unsigned size)
 {
-    if ((addr / size) > 256) {
+
+    dolog("nam_write [0x%llx] = 0x%llx (%d)\n", addr, val, size);
+
+    AC97LinkState *s = opaque;
+
+    if (addr >= memory_region_size(&s->io_nam)) {
         return;
     }
 
@@ -1234,7 +1248,12 @@ const MemoryRegionOps ac97_io_nam_ops = {
 
 static uint64_t nabm_read(void *opaque, hwaddr addr, unsigned size)
 {
-    if ((addr / size) > 64) {
+
+    dolog("nabm_read [0x%llx] (%d)\n", addr, size);
+
+    AC97LinkState *s = opaque;
+
+    if (addr >= memory_region_size(&s->io_nabm)) {
         return -1;
     }
 
@@ -1253,7 +1272,12 @@ static uint64_t nabm_read(void *opaque, hwaddr addr, unsigned size)
 static void nabm_write(void *opaque, hwaddr addr, uint64_t val,
                       unsigned size)
 {
-    if ((addr / size) > 64) {
+
+    dolog("nabm_write [0x%llx] = 0x%llx (%d)\n", addr, val, size);
+
+    AC97LinkState *s = opaque;
+
+    if (addr >= memory_region_size(&s->io_nabm)) {
         return;
     }
 
