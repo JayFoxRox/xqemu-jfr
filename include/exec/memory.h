@@ -16,11 +16,13 @@
 
 #ifndef CONFIG_USER_ONLY
 
-#define DIRTY_MEMORY_VGA       0
-#define DIRTY_MEMORY_CODE      1
-#define DIRTY_MEMORY_MIGRATION 2
-#define DIRTY_MEMORY_NV2A_GPU  3
-#define DIRTY_MEMORY_NUM       4        /* num of dirty bits */
+#define DIRTY_MEMORY_VGA               0
+#define DIRTY_MEMORY_CODE              1
+#define DIRTY_MEMORY_MIGRATION         2
+#define DIRTY_MEMORY_NV2A_GPU_COLOR    3
+#define DIRTY_MEMORY_NV2A_GPU_ZETA     4
+#define DIRTY_MEMORY_NV2A_GPU_RESOURCE 5
+#define DIRTY_MEMORY_NUM               6        /* num of dirty bits */
 
 #include <stdint.h>
 #include <stdbool.h>

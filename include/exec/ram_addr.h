@@ -56,7 +56,11 @@ static inline bool cpu_physical_memory_is_clean(ram_addr_t addr)
     bool code = cpu_physical_memory_get_dirty_flag(addr, DIRTY_MEMORY_CODE);
     bool migration =
         cpu_physical_memory_get_dirty_flag(addr, DIRTY_MEMORY_MIGRATION);
-    bool nv2a_gpu = cpu_physical_memory_get_dirty_flag(addr, DIRTY_MEMORY_NV2A_GPU);
+    /*FIXME: Loop using DIRTY_MEMORY_NUM */
+    bool nv2a_gpu = true;
+    nv2a_gpu = nv2a_gpu && cpu_physical_memory_get_dirty_flag(addr, DIRTY_MEMORY_NV2A_GPU_ZETA);
+    nv2a_gpu = nv2a_gpu && cpu_physical_memory_get_dirty_flag(addr, DIRTY_MEMORY_NV2A_GPU_COLOR);
+    nv2a_gpu = nv2a_gpu && cpu_physical_memory_get_dirty_flag(addr, DIRTY_MEMORY_NV2A_GPU_RESOURCE);
     return !(vga && code && migration && nv2a_gpu);
 }
 
@@ -77,7 +81,10 @@ static inline void cpu_physical_memory_set_dirty_range(ram_addr_t start,
     bitmap_set(ram_list.dirty_memory[DIRTY_MEMORY_MIGRATION], page, end - page);
     bitmap_set(ram_list.dirty_memory[DIRTY_MEMORY_VGA], page, end - page);
     bitmap_set(ram_list.dirty_memory[DIRTY_MEMORY_CODE], page, end - page);
-    bitmap_set(ram_list.dirty_memory[DIRTY_MEMORY_NV2A_GPU], page, end - page);
+    /* FIXME: Loop using DIRTY_MEMORY_NUM */
+    bitmap_set(ram_list.dirty_memory[DIRTY_MEMORY_NV2A_GPU_ZETA], page, end - page);
+    bitmap_set(ram_list.dirty_memory[DIRTY_MEMORY_NV2A_GPU_COLOR], page, end - page);
+    bitmap_set(ram_list.dirty_memory[DIRTY_MEMORY_NV2A_GPU_RESOURCE], page, end - page);
     xen_modified_memory(start, length);
 }
 
@@ -107,7 +114,10 @@ static inline void cpu_physical_memory_set_dirty_lebitmap(unsigned long *bitmap,
                 ram_list.dirty_memory[DIRTY_MEMORY_MIGRATION][page + k] |= temp;
                 ram_list.dirty_memory[DIRTY_MEMORY_VGA][page + k] |= temp;
                 ram_list.dirty_memory[DIRTY_MEMORY_CODE][page + k] |= temp;
-                ram_list.dirty_memory[DIRTY_MEMORY_NV2A_GPU][page + k] |= temp;
+                /* FIXME: Loop using DIRTY_MEMORY_NUM */
+                ram_list.dirty_memory[DIRTY_MEMORY_NV2A_GPU_ZETA][page + k] |= temp;
+                ram_list.dirty_memory[DIRTY_MEMORY_NV2A_GPU_COLOR][page + k] |= temp;
+                ram_list.dirty_memory[DIRTY_MEMORY_NV2A_GPU_RESOURCE][page + k] |= temp;
             }
         }
         xen_modified_memory(start, pages);
