@@ -1552,6 +1552,10 @@ static void notdirty_mem_write(void *opaque, hwaddr ram_addr,
     }
     cpu_physical_memory_set_dirty_flag(ram_addr, DIRTY_MEMORY_MIGRATION);
     cpu_physical_memory_set_dirty_flag(ram_addr, DIRTY_MEMORY_VGA);
+    //FIXME: FIXME FIXME MORE EXPERIMENTAL STUFF
+    cpu_physical_memory_set_dirty_flag(ram_addr, DIRTY_MEMORY_NV2A_GPU_ZETA);
+    cpu_physical_memory_set_dirty_flag(ram_addr, DIRTY_MEMORY_NV2A_GPU_COLOR);
+    cpu_physical_memory_set_dirty_flag(ram_addr, DIRTY_MEMORY_NV2A_GPU_RESOURCE);
     /* we remove the notdirty callback only if the code has been
        flushed */
     if (!cpu_physical_memory_is_clean(ram_addr)) {
@@ -1960,6 +1964,10 @@ static void invalidate_and_set_dirty(hwaddr addr,
         /* set dirty bit */
         cpu_physical_memory_set_dirty_flag(addr, DIRTY_MEMORY_VGA);
         cpu_physical_memory_set_dirty_flag(addr, DIRTY_MEMORY_MIGRATION);
+        //FIXME: FIXME FIXME MORE EXPERIMENTAL STUFF
+        cpu_physical_memory_set_dirty_flag(addr, DIRTY_MEMORY_NV2A_GPU_ZETA);
+        cpu_physical_memory_set_dirty_flag(addr, DIRTY_MEMORY_NV2A_GPU_COLOR);
+        cpu_physical_memory_set_dirty_flag(addr, DIRTY_MEMORY_NV2A_GPU_RESOURCE);
     }
     xen_modified_memory(addr, length);
 }
@@ -2564,6 +2572,10 @@ void stl_phys_notdirty(AddressSpace *as, hwaddr addr, uint32_t val)
                 cpu_physical_memory_set_dirty_flag(addr1,
                                                    DIRTY_MEMORY_MIGRATION);
                 cpu_physical_memory_set_dirty_flag(addr1, DIRTY_MEMORY_VGA);
+                //FIXME FIXME FIXME: EXPIREMENTAL ADD!
+                cpu_physical_memory_set_dirty_flag(addr1, DIRTY_MEMORY_NV2A_GPU_ZETA);
+                cpu_physical_memory_set_dirty_flag(addr1, DIRTY_MEMORY_NV2A_GPU_COLOR);
+                cpu_physical_memory_set_dirty_flag(addr1, DIRTY_MEMORY_NV2A_GPU_RESOURCE);
             }
         }
     }
