@@ -2432,7 +2432,7 @@ static uint8_t* map_surface(NV2A_GPUState *d, Surface* s, DMAObject* dma, hwaddr
 
 }
 
-static void update_cpu_surface(NV2A_GPUState *d, Surface* s, DMAObject* dma) {
+static void mark_cpu_surface_dirty(NV2A_GPUState *d, Surface* s, DMAObject* dma) {
     memory_region_set_dirty(d->vram, dma->address + s->offset,
                                      s->pitch * d->pgraph.surface_height);
 }
@@ -2588,15 +2588,14 @@ static void pgraph_update_surface_zeta(NV2A_GPUState *d, bool upload)
     }
 
     /* Update dirty flags */
-    if (upload) {
-        /* CPU didn't modify it again yet */
-        mark_cpu_surface_clean(d, s, &zeta_dma, DIRTY_MEMORY_NV2A_GPU_ZETA);
-    } else {
-        /* Surface downloaded, tell CPU to update */
-        update_cpu_surface(d, s, &zeta_dma);
+    if (!upload) {
+        /* Surface downloaded. Handlers (VGA etc.) need to update */
+        mark_cpu_surface_dirty(d, s, &zeta_dma);
         /* We haven't drawn to this again yet, we just downloaded it*/
         s->draw_dirty = false;
     }
+    /* Mark it as clean only for us, so changes dirty it again */
+    mark_cpu_surface_clean(d, s, &zeta_dma, DIRTY_MEMORY_NV2A_GPU_ZETA);
 #endif
 }
 
@@ -2650,15 +2649,14 @@ static void pgraph_update_surface_color(NV2A_GPUState *d, bool upload)
     update_gl_color_mask(&d->pgraph); //FIXME: Defer..
 
     /* Update dirty flags */
-    if (upload) {
-        /* CPU didn't modify it again yet */
-        mark_cpu_surface_clean(d, s, &color_dma, DIRTY_MEMORY_NV2A_GPU_COLOR);
-    } else {
-        /* Surface downloaded, tell CPU to update */
-        update_cpu_surface(d, s, &color_dma);
+    if (!upload) {
+        /* Surface downloaded. Handlers (VGA etc.) need to update */
+        mark_cpu_surface_dirty(d, s, &color_dma);
         /* We haven't drawn to this again yet, we just downloaded it*/
         s->draw_dirty = false;
     }
+    /* Mark it as clean only for us, so changes dirty it again */
+    mark_cpu_surface_clean(d, s, &color_dma, DIRTY_MEMORY_NV2A_GPU_COLOR);
 }
 
 static inline void pgraph_update_surfaces(NV2A_GPUState *d, bool upload)
