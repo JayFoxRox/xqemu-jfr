@@ -598,6 +598,19 @@
 #       define NV097_SET_TEXTURE_FORMAT_BASE_SIZE_V               0x0F000000
 #       define NV097_SET_TEXTURE_FORMAT_BASE_SIZE_P               0xF0000000
 #   define NV097_SET_TEXTURE_ADDRESS                          0x00971B08
+#       define NV097_SET_TEXTURE_ADDRESS_U                        0x0000000F
+#       define NV097_SET_TEXTURE_ADDRESS_CYLWRAP_U                0x000000F0 /* Bool */
+#       define NV097_SET_TEXTURE_ADDRESS_V                        0x00000F00 /* Bool */
+#       define NV097_SET_TEXTURE_ADDRESS_CYLWRAP_V                0x0000F000
+#       define NV097_SET_TEXTURE_ADDRESS_P                        0x000F0000
+#       define NV097_SET_TEXTURE_ADDRESS_CYLWRAP_P                0x00F00000 /* Bool */
+#       define NV097_SET_TEXTURE_ADDRESS_CYLWRAP_Q                0xFF000000 /* Bool */
+            /* Used in NV097_SET_TEXTURE_ADDRESS_{ U, V, P } */
+#           define NV097_SET_TEXTURE_ADDRESS_WRAP_WRAP              0x1
+#           define NV097_SET_TEXTURE_ADDRESS_WRAP_MIRROR            0x2
+#           define NV097_SET_TEXTURE_ADDRESS_WRAP_CLAMP_TO_EDGE     0x3
+#           define NV097_SET_TEXTURE_ADDRESS_WRAP_BORDER            0x4
+#           define NV097_SET_TEXTURE_ADDRESS_WRAP_CLAMP_OGL         0x5
 #   define NV097_SET_TEXTURE_CONTROL0                         0x00971B0C
 #       define NV097_SET_TEXTURE_CONTROL0_ENABLE                 (1 << 30)
 #       define NV097_SET_TEXTURE_CONTROL0_MIN_LOD_CLAMP           0x3FFC0000
@@ -953,6 +966,15 @@ typedef struct Texture {
 
     unsigned int lod_bias;
     unsigned int min_filter, mag_filter;
+
+    /* Texture address settings, FIXME: also available in pgraph regs?! */
+    uint8_t wrap_u;
+    uint8_t wrap_v;
+    uint8_t wrap_p;
+    bool cylwrap_u;
+    bool cylwrap_v;
+    bool cylwrap_p;
+    bool cylwrap_q;
 
     bool dma_select;
     hwaddr offset;
@@ -1343,6 +1365,29 @@ static inline void set_gl_cull_face(uint32_t mode) {
             assert(0);
     }
     glCullFace(gl_mode);
+}
+
+static inline GLenum map_gl_wrap_mode(uint32_t mode) {
+    GLenum gl_mode;
+    switch(mode) {
+    case NV097_SET_TEXTURE_ADDRESS_WRAP_WRAP:
+        gl_mode = GL_REPEAT;
+        break;
+    case NV097_SET_TEXTURE_ADDRESS_WRAP_MIRROR:
+        gl_mode = GL_MIRRORED_REPEAT;
+        break;
+    case NV097_SET_TEXTURE_ADDRESS_WRAP_BORDER:
+        gl_mode = GL_CLAMP_TO_BORDER;
+        break;
+    /* FIXME: What's the difference between these 2? */
+    case NV097_SET_TEXTURE_ADDRESS_WRAP_CLAMP_TO_EDGE:
+    case NV097_SET_TEXTURE_ADDRESS_WRAP_CLAMP_OGL:
+        gl_mode = GL_CLAMP_TO_EDGE;
+        break;
+    default:
+        assert(0);
+    }
+    return gl_mode;
 }
 
 static inline GLenum map_gl_compare_func(uint32_t func)
@@ -2003,11 +2048,6 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
 
             if (!texture->dirty) continue;
 
-            glTexParameteri(gl_target, GL_TEXTURE_MIN_FILTER,
-                kelvin_texture_min_filter_map[texture->min_filter]);
-            glTexParameteri(gl_target, GL_TEXTURE_MAG_FILTER,
-                kelvin_texture_mag_filter_map[texture->mag_filter]);
-
             /* load texture data*/
 
             hwaddr dma_len;
@@ -2107,6 +2147,17 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
             if (converted_texture_data != NULL) {
                 g_free(converted_texture_data);
             }
+
+            glTexParameteri(gl_target, GL_TEXTURE_MIN_FILTER,
+                kelvin_texture_min_filter_map[texture->min_filter]);
+            glTexParameteri(gl_target, GL_TEXTURE_MAG_FILTER,
+                kelvin_texture_mag_filter_map[texture->mag_filter]);
+
+            glTexParameteri(gl_target, GL_TEXTURE_WRAP_S,
+                map_gl_wrap_mode(texture->wrap_u));
+            glTexParameteri(gl_target, GL_TEXTURE_WRAP_T,
+                map_gl_wrap_mode(texture->wrap_v));
+            /* FIXME: P and Q wrapping unhandled! */
 
             texture->dirty = false;
         } else {
@@ -3424,6 +3475,26 @@ static void pgraph_method(NV2A_GPUState *d,
         pg->textures[slot].dirty = true;
         pg->shaders_dirty = true;
         break;
+    CASE_4(NV097_SET_TEXTURE_ADDRESS, 64):
+        slot = (class_method - NV097_SET_TEXTURE_ADDRESS) / 64;
+
+        pg->textures[slot].wrap_u =
+            GET_MASK(parameter, NV097_SET_TEXTURE_ADDRESS_U);
+        pg->textures[slot].cylwrap_u =
+            GET_MASK(parameter, NV097_SET_TEXTURE_ADDRESS_CYLWRAP_U);
+        pg->textures[slot].wrap_v =
+            GET_MASK(parameter, NV097_SET_TEXTURE_ADDRESS_V);
+        pg->textures[slot].cylwrap_v =
+            GET_MASK(parameter, NV097_SET_TEXTURE_ADDRESS_CYLWRAP_V);
+        pg->textures[slot].wrap_p =
+            GET_MASK(parameter, NV097_SET_TEXTURE_ADDRESS_P);
+        pg->textures[slot].cylwrap_p =
+            GET_MASK(parameter, NV097_SET_TEXTURE_ADDRESS_CYLWRAP_P);
+        pg->textures[slot].cylwrap_q =
+            GET_MASK(parameter, NV097_SET_TEXTURE_ADDRESS_CYLWRAP_Q);
+
+        pg->textures[slot].dirty = true;
+        break;
     CASE_4(NV097_SET_TEXTURE_CONTROL0, 64):
         slot = (class_method - NV097_SET_TEXTURE_CONTROL0) / 64;
         
@@ -3442,6 +3513,7 @@ static void pgraph_method(NV2A_GPUState *d,
         pg->textures[slot].pitch =
             GET_MASK(parameter, NV097_SET_TEXTURE_CONTROL1_IMAGE_PITCH);
 
+        pg->textures[slot].dirty = true;
         break;
     CASE_4(NV097_SET_TEXTURE_FILTER, 64):
         slot = (class_method - NV097_SET_TEXTURE_FILTER) / 64;
@@ -3453,6 +3525,7 @@ static void pgraph_method(NV2A_GPUState *d,
         pg->textures[slot].mag_filter =
             GET_MASK(parameter, NV097_SET_TEXTURE_FILTER_MAG);
 
+        pg->textures[slot].dirty = true;
         break;
     CASE_4(NV097_SET_TEXTURE_IMAGE_RECT, 64):
         slot = (class_method - NV097_SET_TEXTURE_IMAGE_RECT) / 64;
