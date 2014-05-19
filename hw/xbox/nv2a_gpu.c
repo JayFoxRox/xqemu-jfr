@@ -2508,9 +2508,7 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
     if (upload) {
         /* surface modified (or moved) by the cpu.
          * copy it into the opengl renderbuffer */
-
-        assert(!s->draw_dirty);
-
+ 
         assert(s->pitch % bytes_per_pixel == 0);
 
         glUseProgram(0);
@@ -2561,6 +2559,7 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
 
 }
 
+/* DO NOT USE THIS FUNCTION DIRECTLY! Use pgraph_update_surfaces instead! */
 static void pgraph_update_surface_zeta(NV2A_GPUState *d, bool upload)
 {
 //FIXME FIXME FIXME: Broken feature because the read/draw-pixel operation does fail atm
@@ -2650,6 +2649,7 @@ static void pgraph_update_surface_zeta(NV2A_GPUState *d, bool upload)
 #endif
 }
 
+/* DO NOT USE THIS FUNCTION DIRECTLY! Use pgraph_update_surfaces instead! */
 static void pgraph_update_surface_color(NV2A_GPUState *d, bool upload)
 {
 
@@ -2662,9 +2662,13 @@ static void pgraph_update_surface_color(NV2A_GPUState *d, bool upload)
     if (upload) {
         /* If the surface was not written by the CPU we don't have to upload */
         if (!is_cpu_surface_dirty(d, s, &color_dma, DIRTY_MEMORY_NV2A_GPU_COLOR)) { return; }
+        /* Assertion to make sure we don't overwrite GPU results */
+        assert(s->draw_dirty == false);
     } else {
         /* If we didn't draw on it we don't have to redownload */
         if (!s->draw_dirty) { return; }
+        /* Assertion to make sure we don't overwrite CPU results */
+        assert(is_cpu_surface_dirty(d, s, &color_dma, DIRTY_MEMORY_NV2A_GPU_COLOR) == false);
     }
 
     /* Construct the GL format */
@@ -2710,10 +2714,21 @@ static void pgraph_update_surface_color(NV2A_GPUState *d, bool upload)
     mark_cpu_surface_clean(d, s, &color_dma, DIRTY_MEMORY_NV2A_GPU_COLOR);
 }
 
-static inline void pgraph_update_surfaces(NV2A_GPUState *d, bool upload)
+static inline void pgraph_update_surfaces(NV2A_GPUState *d, bool upload, bool zeta, bool color)
 {
-    pgraph_update_surface_zeta(d, upload);
-    pgraph_update_surface_color(d, upload);
+    /* Early out if we have nothing to do */
+    if (!zeta && !color) {
+        return;
+    }
+    /* Sync dirty bits, then update surfaces [and sync dirty bits again(?)] */
+    memory_region_sync_dirty_bitmap(d->vram);
+    if (zeta) {
+      pgraph_update_surface_zeta(d, upload);
+    }
+    if (color) {
+      pgraph_update_surface_color(d, upload);
+    }
+//    memory_region_sync_dirty_bitmap(d->vram); //FIXME: Is this necessary?
 }
 
 static void pgraph_init(PGRAPHState *pg)
@@ -3007,11 +3022,11 @@ static void pgraph_method(NV2A_GPUState *d,
     
     case NV097_WAIT_FOR_IDLE:
         glFinish();
-        pgraph_update_surfaces(d, false);
+        pgraph_update_surfaces(d, false, true, true);
         break;
 
     case NV097_FLIP_STALL:
-        pgraph_update_surfaces(d, false);
+        pgraph_update_surfaces(d, false, true, true);
 
         /* Tell the debugger that the frame was completed */
         //FIXME: Figure out if this is a good position, we really have to figure out what a frame is:
@@ -3051,13 +3066,13 @@ static void pgraph_method(NV2A_GPUState *d,
         break;
     case NV097_SET_CONTEXT_DMA_COLOR:
         /* try to get any straggling draws in before the surface's changed :/ */
-        pgraph_update_surface_color(d, false);
+        pgraph_update_surfaces(d, false, false, true);
 
         pg->dma_color = parameter;
         break;
     case NV097_SET_CONTEXT_DMA_ZETA:
         /* try to get any straggling draws in before the surface's changed :/ */
-        pgraph_update_surface_zeta(d, false);
+        pgraph_update_surfaces(d, false, true, false);
 
         pg->dma_zeta = parameter;
         break;
@@ -3072,7 +3087,7 @@ static void pgraph_method(NV2A_GPUState *d,
         break;
 
     case NV097_SET_SURFACE_CLIP_HORIZONTAL:
-        pgraph_update_surfaces(d, false);
+        pgraph_update_surfaces(d, false, true, true);
 
         pg->surface_x =
             GET_MASK(parameter, NV097_SET_SURFACE_CLIP_HORIZONTAL_X);
@@ -3080,7 +3095,7 @@ static void pgraph_method(NV2A_GPUState *d,
             GET_MASK(parameter, NV097_SET_SURFACE_CLIP_HORIZONTAL_WIDTH);
         break;
     case NV097_SET_SURFACE_CLIP_VERTICAL:
-        pgraph_update_surfaces(d, false);
+        pgraph_update_surfaces(d, false, true, true);
 
         pg->surface_y =
             GET_MASK(parameter, NV097_SET_SURFACE_CLIP_VERTICAL_Y);
@@ -3088,7 +3103,7 @@ static void pgraph_method(NV2A_GPUState *d,
             GET_MASK(parameter, NV097_SET_SURFACE_CLIP_VERTICAL_HEIGHT);
         break;
     case NV097_SET_SURFACE_FORMAT:
-        pgraph_update_surfaces(d, false);
+        pgraph_update_surfaces(d, false, true, true);
 
         pg->surface_color.format =
             GET_MASK(parameter, NV097_SET_SURFACE_FORMAT_COLOR);
@@ -3096,7 +3111,7 @@ static void pgraph_method(NV2A_GPUState *d,
             GET_MASK(parameter, NV097_SET_SURFACE_FORMAT_ZETA);
         break;
     case NV097_SET_SURFACE_PITCH:
-        pgraph_update_surfaces(d, false);
+        pgraph_update_surfaces(d, false, true, true);
 
         pg->surface_color.pitch =
             GET_MASK(parameter, NV097_SET_SURFACE_PITCH_COLOR);
@@ -3104,12 +3119,12 @@ static void pgraph_method(NV2A_GPUState *d,
             GET_MASK(parameter, NV097_SET_SURFACE_PITCH_ZETA);
         break;
     case NV097_SET_SURFACE_COLOR_OFFSET:
-        pgraph_update_surface_color(d, false);
+        pgraph_update_surfaces(d, false, false, true);
 
         pg->surface_color.offset = parameter;
         break;
     case NV097_SET_SURFACE_ZETA_OFFSET:
-        pgraph_update_surface_zeta(d, false);
+        pgraph_update_surfaces(d, false, true, false);
 
         pg->surface_zeta.offset = parameter;
         break;
@@ -3346,8 +3361,52 @@ static void pgraph_method(NV2A_GPUState *d,
 
         break;
 
-    case NV097_SET_BEGIN_END:
-        if (parameter == NV097_SET_BEGIN_END_OP_END) {
+    case NV097_SET_BEGIN_END: {
+
+        bool writeZeta = pg->depth_mask ||
+                         GET_MASK(pg->regs[NV_PGRAPH_CONTROL_1],
+                                  NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE);
+        bool writeColor = pg->color_mask;
+
+        if (parameter != NV097_SET_BEGIN_END_OP_END) {
+
+            assert(parameter <= NV097_SET_BEGIN_END_OP_POLYGON);
+
+            /* Debug output */
+            {
+                char buffer[128];
+                sprintf(buffer,"NV2A: BEGIN_END 0x%X", parameter);
+                glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, buffer);
+            }
+
+            pgraph_update_surfaces(d, true, writeZeta, writeColor);
+
+            /* FIXME: Skip most stuff if writeZeta and writeColor are both false */
+
+            bool use_vertex_program = GET_MASK(pg->regs[NV_PGRAPH_CSV0_D],
+                                               NV_PGRAPH_CSV0_D_MODE) == 2;
+            if (use_vertex_program) {
+                glEnable(GL_VERTEX_PROGRAM_ARB);
+                kelvin_bind_vertex_program(kelvin);
+            } else {
+                glDisable(GL_VERTEX_PROGRAM_ARB);
+            }
+
+            /* FIXME: Use simplified shader for zeta only? */
+
+            pgraph_bind_shaders(pg);
+
+            pgraph_bind_textures(d);
+            kelvin_bind_vertex_attributes(d, kelvin);
+
+
+            kelvin->gl_primitive_mode = kelvin_primitive_map[parameter];
+
+            kelvin->inline_elements_length = 0;
+            kelvin->inline_array_length = 0;
+            kelvin->inline_buffer_length = 0;
+
+        } else {
 
             if (kelvin->inline_buffer_length) {
                 assert(!kelvin->inline_array_length);
@@ -3402,55 +3461,20 @@ static void pgraph_method(NV2A_GPUState *d,
             }/* else {
                 assert(false);
             }*/
+
+            if (writeZeta) {
+                pg->surface_zeta.draw_dirty = true;
+            }
+            if (writeColor) {
+                pg->surface_color.draw_dirty = true;
+            }
+
             assert(glGetError() == GL_NO_ERROR);
             glPopDebugGroup();
-        } else {
-            assert(parameter <= NV097_SET_BEGIN_END_OP_POLYGON);
 
-            /* Debug output */
-            {
-                char buffer[128];
-                sprintf(buffer,"NV2A: BEGIN_END 0x%X", parameter);
-                glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, buffer);
-            }
-
-            if (pg->depth_mask || GET_MASK(pg->regs[NV_PGRAPH_CONTROL_1],
-                     NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE)) {
-                pgraph_update_surface_zeta(d, true);
-            }
-            if (pg->color_mask) {
-                pgraph_update_surface_color(d, true);
-            }
-
-            bool use_vertex_program = GET_MASK(pg->regs[NV_PGRAPH_CSV0_D],
-                                               NV_PGRAPH_CSV0_D_MODE) == 2;
-            if (use_vertex_program) {
-                glEnable(GL_VERTEX_PROGRAM_ARB);
-                kelvin_bind_vertex_program(kelvin);
-            } else {
-                glDisable(GL_VERTEX_PROGRAM_ARB);
-            }
-
-            pgraph_bind_shaders(pg);
-
-            pgraph_bind_textures(d);
-            kelvin_bind_vertex_attributes(d, kelvin);
-
-
-            kelvin->gl_primitive_mode = kelvin_primitive_map[parameter];
-
-            kelvin->inline_elements_length = 0;
-            kelvin->inline_array_length = 0;
-            kelvin->inline_buffer_length = 0;
-        }
-        if (pg->depth_mask || GET_MASK(pg->regs[NV_PGRAPH_CONTROL_1],
-                 NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE)) {
-            pg->surface_zeta.draw_dirty = true;
-        }
-        if (pg->color_mask) {
-            pg->surface_color.draw_dirty = true;
         }
         break;
+    }
     CASE_4(NV097_SET_TEXTURE_OFFSET, 64):
         slot = (class_method - NV097_SET_TEXTURE_OFFSET) / 64;
         pg->textures[slot].offset = parameter;
@@ -3578,7 +3602,7 @@ static void pgraph_method(NV2A_GPUState *d,
         break;
     case NV097_BACK_END_WRITE_SEMAPHORE_RELEASE: {
 
-        pgraph_update_surfaces(d, false);
+        pgraph_update_surfaces(d, false, true, true);
 
         //qemu_mutex_unlock(&d->pgraph.lock);
         //qemu_mutex_lock_iothread();
@@ -3619,8 +3643,10 @@ static void pgraph_method(NV2A_GPUState *d,
 
         GLbitfield gl_mask = 0;
 
+        pgraph_update_surfaces(d, true, parameter & NV097_CLEAR_SURFACE_ZETA,
+                                        parameter & NV097_CLEAR_SURFACE_COLOR);
+
         if (parameter & NV097_CLEAR_SURFACE_ZETA) {
-            pgraph_update_surface_zeta(d, true);
 
             uint32_t clear_zstencil = d->pgraph.regs[NV_PGRAPH_ZSTENCILCLEARVALUE];
             GLint gl_clear_stencil;
@@ -3655,7 +3681,6 @@ static void pgraph_method(NV2A_GPUState *d,
         }
 
         if (parameter & NV097_CLEAR_SURFACE_COLOR) {
-            pgraph_update_surface_color(d, true);
 
             gl_mask |= GL_COLOR_BUFFER_BIT;
 
