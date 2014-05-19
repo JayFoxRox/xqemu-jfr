@@ -580,11 +580,6 @@ static int smbus_smc_init(SMBusDevice *dev)
   } else {
     smc_dev->scratch = 0x00;
   }
-  /* FIXME: Remove this once I integrated these flags into the launcher.. */
-  if (0) {
-    if (0) { smc_dev->scratch |= 0x02; } // Display fatal error
-    if (1) { smc_dev->scratch |= 0x04; } // Skip boot anim hack
-  }
 
   // Create some timers for us
   smc_dev->watchdog_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, smc_watchdog_timer_cb, smc_dev);
