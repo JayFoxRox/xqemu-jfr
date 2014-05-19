@@ -823,7 +823,7 @@ static const ColorFormatInfo kelvin_color_format_map[66] = {
         {4, false, GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, 0, GL_RGBA},
 
     [NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_R5G6B5] =
-        {2, true, GL_RGB, GL_RGB, GL_UNSIGNED_SHORT_5_6_5_REV},
+        {2, true, GL_RGB, GL_RGB, GL_UNSIGNED_SHORT_5_6_5},
     [NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8] =
         {4, true, GL_RGBA, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV},
     /* TODO: how do opengl alpha textures work? */
