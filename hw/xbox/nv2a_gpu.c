@@ -2629,7 +2629,7 @@ static void pgraph_update_surface_zeta(NV2A_GPUState *d, bool upload)
     hwaddr zeta_len;
     uint8_t *zeta_data = map_surface(d, s, &zeta_dma, &zeta_len);
 
-    /* Allow depth access, then perform the stencil upload or download */
+    /* Allow depth access, then perform the depth upload or download */
     if (upload) {
         glDepthMask(GL_TRUE);
         //FIXME: Defer flag..
@@ -2706,7 +2706,7 @@ static void pgraph_update_surface_color(NV2A_GPUState *d, bool upload)
     hwaddr color_len;
     uint8_t *color_data = map_surface(d, s, &color_dma, &color_len);
 
-    /* Allow depth access, then perform the stencil upload or download */
+    /* Allow color access, then perform the color upload or download */
     if (upload) {
         glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
         //FIXME: Set defer flag
