@@ -526,6 +526,7 @@
 #   define NV097_SET_STENCIL_MASK                             0x00970360
 #   define NV097_SET_CLIP_MIN                                 0x00970394
 #   define NV097_SET_CLIP_MAX                                 0x00970398
+#   define NV097_SET_TEXTURE_MATRIX_ENABLE                    0x00970420 /* 4 Slots, bool */
 #   define NV097_SET_COMPOSITE_MATRIX                         0x00970680
 #   define NV097_SET_TEXTURE_MATRIX0                          0x009706c0
 #   define NV097_SET_TEXTURE_MATRIX1                          0x00970700
@@ -1149,6 +1150,8 @@ typedef struct PGRAPHState {
     GLuint gl_program;
 
     float composite_matrix[16];
+
+    bool texture_matrix_enable[4];
 
     float texture_matrix0[16];
     float texture_matrix1[16];
@@ -2425,14 +2428,22 @@ static void pgraph_bind_shaders(PGRAPHState *pg)
         GLint comMatLoc = glGetUniformLocation(pg->gl_program, "composite");
         glUniformMatrix4fv(comMatLoc, 1, GL_FALSE, pg->composite_matrix);
 
+        /* FIXME: Disabling texture matrices should probably be done in the shader? */
+        const float identity_matrix[4*4] = {
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f
+        };
+
         GLint texMat0Loc = glGetUniformLocation(pg->gl_program, "textureMatrix0");
-        glUniformMatrix4fv(texMat0Loc, 1, GL_FALSE, pg->texture_matrix0);
+        glUniformMatrix4fv(texMat0Loc, 1, GL_FALSE, pg->texture_matrix_enable[0]?pg->texture_matrix0:identity_matrix);
         GLint texMat1Loc = glGetUniformLocation(pg->gl_program, "textureMatrix1");
-        glUniformMatrix4fv(texMat1Loc, 1, GL_FALSE, pg->texture_matrix1);
+        glUniformMatrix4fv(texMat1Loc, 1, GL_FALSE, pg->texture_matrix_enable[1]?pg->texture_matrix1:identity_matrix);
         GLint texMat2Loc = glGetUniformLocation(pg->gl_program, "textureMatrix2");
-        glUniformMatrix4fv(texMat2Loc, 1, GL_FALSE, pg->texture_matrix2);
+        glUniformMatrix4fv(texMat2Loc, 1, GL_FALSE, pg->texture_matrix_enable[2]?pg->texture_matrix2:identity_matrix);
         GLint texMat3Loc = glGetUniformLocation(pg->gl_program, "textureMatrix3");
-        glUniformMatrix4fv(texMat3Loc, 1, GL_FALSE, pg->texture_matrix3);
+        glUniformMatrix4fv(texMat3Loc, 1, GL_FALSE, pg->texture_matrix_enable[3]?pg->texture_matrix3:identity_matrix);
 
         float zclip_max = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMAX];
         float zclip_min = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMIN];
@@ -3171,6 +3182,11 @@ static void pgraph_method(NV2A_GPUState *d,
             NV097_SET_COMPOSITE_MATRIX + 0x3c:
         slot = (class_method - NV097_SET_COMPOSITE_MATRIX) / 4;
         pg->composite_matrix[slot] = *(float*)&parameter;
+        break;
+
+    CASE_4(NV097_SET_TEXTURE_MATRIX_ENABLE, 4):
+        slot = (class_method - NV097_SET_TEXTURE_MATRIX_ENABLE) / 4;
+        pg->texture_matrix_enable[slot] = parameter;
         break;
 
     case NV097_SET_TEXTURE_MATRIX0 ...
