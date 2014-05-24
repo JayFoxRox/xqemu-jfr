@@ -32,15 +32,44 @@
 #include "hw/xbox/u_format_r11g11b10f.h"
 #include "hw/xbox/nv2a_gpu_vsh.h"
 #include "hw/xbox/nv2a_gpu_psh.h"
+#include "hw/xbox/nv2a_gpu_swizzle.h"
 
 #include "hw/xbox/nv2a_gpu.h"
 
-#define DEBUG_NV2A_GPU
+#define DEBUG_NV2A_GPU_DISABLE_MIPMAP
+#define DEBUG_NV2A_GPU_EXPORT
+//#define DEBUG_NV2A_GPU
 #ifdef DEBUG_NV2A_GPU
 # define NV2A_GPU_DPRINTF(format, ...)       printf("nv2a: " format, ## __VA_ARGS__)
 #else
 # define NV2A_GPU_DPRINTF(format, ...)       do { } while (0)
 #endif
+
+#ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
+const char** feedback[] = {
+    // Fallback
+    [0] = { "debug_v0" },
+    // Program 31 [dolphin/seafloor.xvs]
+    [31] = { "debug_v0",
+             "debug_0_R12",
+             "debug_1_R12",
+             "debug_2_R12",
+             "debug_3_R12",
+             "debug_4_R12",
+             "debug_5_R12",
+             "debug_6_R12",
+             "debug_7_R12",
+             "debug_8_R12",
+             "debug_oPos" }
+};
+#   define VERTEX_START 0
+#   define VERTEX_COUNT 20
+#endif
+
+/* 4096 x 4096 renderbuffers */
+#define FB_W ((1 << 12)/2)
+#define FB_H ((1 << 12)/4)
+
 
 
 #define NV_NUM_BLOCKS 21
@@ -66,664 +95,8 @@
 #define NV_PRAMIN       19  /* RAMIN access */
 #define NV_USER         20  /* PFIFO MMIO and DMA submission area */
 
-
-
-#define NV_PMC_BOOT_0                                    0x00000000
-#define NV_PMC_INTR_0                                    0x00000100
-#   define NV_PMC_INTR_0_PFIFO                                 (1 << 8)
-#   define NV_PMC_INTR_0_PGRAPH                               (1 << 12)
-#   define NV_PMC_INTR_0_PCRTC                                (1 << 24)
-#   define NV_PMC_INTR_0_PBUS                                 (1 << 28)
-#   define NV_PMC_INTR_0_SOFTWARE                             (1 << 31)
-#define NV_PMC_INTR_EN_0                                 0x00000140
-#   define NV_PMC_INTR_EN_0_HARDWARE                            1
-#   define NV_PMC_INTR_EN_0_SOFTWARE                            2
-#define NV_PMC_ENABLE                                    0x00000200
-#   define NV_PMC_ENABLE_PFIFO                                 (1 << 8)
-#   define NV_PMC_ENABLE_PGRAPH                               (1 << 12)
-
-
-/* These map approximately to the pci registers */
-#define NV_PBUS_PCI_NV_0                                 0x00000800
-#   define NV_PBUS_PCI_NV_0_VENDOR_ID                         0x0000FFFF
-#   define NV_CONFIG_PCI_NV_0_DEVICE_ID                       0xFFFF0000
-#define NV_PBUS_PCI_NV_1                                 0x00000804
-#define NV_PBUS_PCI_NV_2                                 0x00000808
-#   define NV_PBUS_PCI_NV_2_REVISION_ID                       0x000000FF
-#   define NV_PBUS_PCI_NV_2_CLASS_CODE                        0xFFFFFF00
-#define NV_PBUS_PCI_NV_3                                 0x0000080C
-#   define NV_PBUS_PCI_NV_3_LATENCY_TIMER                     0x0000F800
-#   define NV_PBUS_PCI_NV_3_HEADER_TYPE                       0x00FF0000
-#define NV_PBUS_PCI_NV_4                                 0x00000810
-#   define NV_PBUS_PCI_NV_4_SPACE_TYPE                        0x00000001
-#   define NV_PBUS_PCI_NV_4_ADDRESS_TYPE                      0x00000006
-#   define NV_PBUS_PCI_NV_4_PREFETCHABLE                      0x00000008
-#   define NV_PBUS_PCI_NV_4_BASE_ADDRESS                      0xFF000000
-#define NV_PBUS_PCI_NV_5                                 0x00000814
-#   define NV_PBUS_PCI_NV_5_SPACE_TYPE                        0x00000001
-#   define NV_PBUS_PCI_NV_5_ADDRESS_TYPE                      0x00000006
-#   define NV_PBUS_PCI_NV_5_PREFETCHABLE                      0x00000008
-#   define NV_PBUS_PCI_NV_5_BASE_ADDRESS                      0xFF000000
-#define NV_PBUS_PCI_NV_6                                 0x00000818
-#   define NV_PBUS_PCI_NV_6_SPACE_TYPE                        0x00000001
-#   define NV_PBUS_PCI_NV_6_ADDRESS_TYPE                      0x00000006
-#   define NV_PBUS_PCI_NV_6_PREFETCHABLE                      0x00000008
-#   define NV_PBUS_PCI_NV_6_BASE_ADDRESS                      0xFFF80000
-#define NV_PBUS_PCI_NV_11                                0x0000082C
-#   define NV_PBUS_PCI_NV_11_SUBSYSTEM_VENDOR_ID             0x0000FFFF
-#   define NV_PBUS_PCI_NV_11_SUBSYSTEM_ID                    0xFFFF0000
-#define NV_PBUS_PCI_NV_12                                0x00000830
-#   define NV_PBUS_PCI_NV_12_ROM_DECODE                      0x00000001
-#   define NV_PBUS_PCI_NV_12_ROM_BASE                        0xFFFF0000
-#define NV_PBUS_PCI_NV_13                                0x00000834
-#   define NV_PBUS_PCI_NV_13_CAP_PTR                         0x000000FF
-#define NV_PBUS_PCI_NV_15                                0x0000083C
-#   define NV_PBUS_PCI_NV_15_INTR_LINE                       0x000000FF
-#   define NV_PBUS_PCI_NV_15_INTR_PIN                        0x0000FF00
-#   define NV_PBUS_PCI_NV_15_MIN_GNT                         0x00FF0000
-#   define NV_PBUS_PCI_NV_15_MAX_LAT                         0xFF000000
-
-
-#define NV_PFIFO_INTR_0                                  0x00000100
-#   define NV_PFIFO_INTR_0_CACHE_ERROR                          (1 << 0)
-#   define NV_PFIFO_INTR_0_RUNOUT                               (1 << 4)
-#   define NV_PFIFO_INTR_0_RUNOUT_OVERFLOW                      (1 << 8)
-#   define NV_PFIFO_INTR_0_DMA_PUSHER                          (1 << 12)
-#   define NV_PFIFO_INTR_0_DMA_PT                              (1 << 16)
-#   define NV_PFIFO_INTR_0_SEMAPHORE                           (1 << 20)
-#   define NV_PFIFO_INTR_0_ACQUIRE_TIMEOUT                     (1 << 24)
-#define NV_PFIFO_INTR_EN_0                               0x00000140
-#   define NV_PFIFO_INTR_EN_0_CACHE_ERROR                       (1 << 0)
-#   define NV_PFIFO_INTR_EN_0_RUNOUT                            (1 << 4)
-#   define NV_PFIFO_INTR_EN_0_RUNOUT_OVERFLOW                   (1 << 8)
-#   define NV_PFIFO_INTR_EN_0_DMA_PUSHER                       (1 << 12)
-#   define NV_PFIFO_INTR_EN_0_DMA_PT                           (1 << 16)
-#   define NV_PFIFO_INTR_EN_0_SEMAPHORE                        (1 << 20)
-#   define NV_PFIFO_INTR_EN_0_ACQUIRE_TIMEOUT                  (1 << 24)
-#define NV_PFIFO_RAMHT                                   0x00000210
-#   define NV_PFIFO_RAMHT_BASE_ADDRESS                        0x000001F0
-#   define NV_PFIFO_RAMHT_SIZE                                0x00030000
-#       define NV_PFIFO_RAMHT_SIZE_4K                             0
-#       define NV_PFIFO_RAMHT_SIZE_8K                             1
-#       define NV_PFIFO_RAMHT_SIZE_16K                            2
-#       define NV_PFIFO_RAMHT_SIZE_32K                            3
-#   define NV_PFIFO_RAMHT_SEARCH                              0x03000000
-#       define NV_PFIFO_RAMHT_SEARCH_16                           0
-#       define NV_PFIFO_RAMHT_SEARCH_32                           1
-#       define NV_PFIFO_RAMHT_SEARCH_64                           2
-#       define NV_PFIFO_RAMHT_SEARCH_128                          3
-#define NV_PFIFO_RAMFC                                   0x00000214
-#   define NV_PFIFO_RAMFC_BASE_ADDRESS1                       0x000001FC
-#   define NV_PFIFO_RAMFC_SIZE                                0x00010000
-#   define NV_PFIFO_RAMFC_BASE_ADDRESS2                       0x00FE0000
-#define NV_PFIFO_RAMRO                                   0x00000218
-#   define NV_PFIFO_RAMRO_BASE_ADDRESS                        0x000001FE
-#   define NV_PFIFO_RAMRO_SIZE                                0x00010000
-#define NV_PFIFO_RUNOUT_STATUS                           0x00000400
-#   define NV_PFIFO_RUNOUT_STATUS_RANOUT                       (1 << 0)
-#   define NV_PFIFO_RUNOUT_STATUS_LOW_MARK                     (1 << 4)
-#   define NV_PFIFO_RUNOUT_STATUS_HIGH_MARK                    (1 << 8)
-#define NV_PFIFO_MODE                                    0x00000504
-#define NV_PFIFO_DMA                                     0x00000508
-#define NV_PFIFO_CACHE1_PUSH0                            0x00001200
-#   define NV_PFIFO_CACHE1_PUSH0_ACCESS                         (1 << 0)
-#define NV_PFIFO_CACHE1_PUSH1                            0x00001204
-#   define NV_PFIFO_CACHE1_PUSH1_CHID                         0x0000001F
-#   define NV_PFIFO_CACHE1_PUSH1_MODE                         0x00000100
-#define NV_PFIFO_CACHE1_STATUS                           0x00001214
-#   define NV_PFIFO_CACHE1_STATUS_LOW_MARK                      (1 << 4)
-#   define NV_PFIFO_CACHE1_STATUS_HIGH_MARK                     (1 << 8)
-#define NV_PFIFO_CACHE1_DMA_PUSH                         0x00001220
-#   define NV_PFIFO_CACHE1_DMA_PUSH_ACCESS                      (1 << 0)
-#   define NV_PFIFO_CACHE1_DMA_PUSH_STATE                       (1 << 4)
-#   define NV_PFIFO_CACHE1_DMA_PUSH_BUFFER                      (1 << 8)
-#   define NV_PFIFO_CACHE1_DMA_PUSH_STATUS                     (1 << 12)
-#   define NV_PFIFO_CACHE1_DMA_PUSH_ACQUIRE                    (1 << 16)
-#define NV_PFIFO_CACHE1_DMA_FETCH                        0x00001224
-#   define NV_PFIFO_CACHE1_DMA_FETCH_TRIG                     0x000000F8
-#   define NV_PFIFO_CACHE1_DMA_FETCH_SIZE                     0x0000E000
-#   define NV_PFIFO_CACHE1_DMA_FETCH_MAX_REQS                 0x001F0000
-#define NV_PFIFO_CACHE1_DMA_STATE                        0x00001228
-#   define NV_PFIFO_CACHE1_DMA_STATE_METHOD_TYPE                (1 << 0)
-#   define NV_PFIFO_CACHE1_DMA_STATE_METHOD                   0x00001FFC
-#   define NV_PFIFO_CACHE1_DMA_STATE_SUBCHANNEL               0x0000E000
-#   define NV_PFIFO_CACHE1_DMA_STATE_METHOD_COUNT             0x1FFC0000
-#   define NV_PFIFO_CACHE1_DMA_STATE_ERROR                    0xE0000000
-#       define NV_PFIFO_CACHE1_DMA_STATE_ERROR_NONE               0
-#       define NV_PFIFO_CACHE1_DMA_STATE_ERROR_CALL               1
-#       define NV_PFIFO_CACHE1_DMA_STATE_ERROR_NON_CACHE          2
-#       define NV_PFIFO_CACHE1_DMA_STATE_ERROR_RETURN             3
-#       define NV_PFIFO_CACHE1_DMA_STATE_ERROR_RESERVED_CMD       4
-#       define NV_PFIFO_CACHE1_DMA_STATE_ERROR_PROTECTION         6
-#define NV_PFIFO_CACHE1_DMA_INSTANCE                     0x0000122C
-#   define NV_PFIFO_CACHE1_DMA_INSTANCE_ADDRESS               0x0000FFFF
-#define NV_PFIFO_CACHE1_DMA_PUT                          0x00001240
-#define NV_PFIFO_CACHE1_DMA_GET                          0x00001244
-#define NV_PFIFO_CACHE1_DMA_SUBROUTINE                   0x0000124C
-#   define NV_PFIFO_CACHE1_DMA_SUBROUTINE_RETURN_OFFSET       0x1FFFFFFC
-#   define NV_PFIFO_CACHE1_DMA_SUBROUTINE_STATE                (1 << 0)
-#define NV_PFIFO_CACHE1_PULL0                            0x00001250
-#   define NV_PFIFO_CACHE1_PULL0_ACCESS                        (1 << 0)
-#define NV_PFIFO_CACHE1_ENGINE                           0x00001280
-#define NV_PFIFO_CACHE1_DMA_DCOUNT                       0x000012A0
-#   define NV_PFIFO_CACHE1_DMA_DCOUNT_VALUE                   0x00001FFC
-#define NV_PFIFO_CACHE1_DMA_GET_JMP_SHADOW               0x000012A4
-#   define NV_PFIFO_CACHE1_DMA_GET_JMP_SHADOW_OFFSET          0x1FFFFFFC
-#define NV_PFIFO_CACHE1_DMA_RSVD_SHADOW                  0x000012A8
-#define NV_PFIFO_CACHE1_DMA_DATA_SHADOW                  0x000012AC
-
-
-#define NV_PGRAPH_INTR                                   0x00000100
-#   define NV_PGRAPH_INTR_NOTIFY                              (1 << 0)
-#   define NV_PGRAPH_INTR_MISSING_HW                          (1 << 4)
-#   define NV_PGRAPH_INTR_TLB_PRESENT_DMA_R                   (1 << 6)
-#   define NV_PGRAPH_INTR_TLB_PRESENT_DMA_W                   (1 << 7)
-#   define NV_PGRAPH_INTR_TLB_PRESENT_TEX_A                   (1 << 8)
-#   define NV_PGRAPH_INTR_TLB_PRESENT_TEX_B                   (1 << 9)
-#   define NV_PGRAPH_INTR_TLB_PRESENT_VTX                    (1 << 10)
-#   define NV_PGRAPH_INTR_CONTEXT_SWITCH                     (1 << 12)
-#   define NV_PGRAPH_INTR_STATE3D                            (1 << 13)
-#   define NV_PGRAPH_INTR_BUFFER_NOTIFY                      (1 << 16)
-#   define NV_PGRAPH_INTR_ERROR                              (1 << 20)
-#   define NV_PGRAPH_INTR_SINGLE_STEP                        (1 << 24)
-#define NV_PGRAPH_NSOURCE                                0x00000108
-#   define NV_PGRAPH_NSOURCE_NOTIFICATION                     (1 << 0) 
-#define NV_PGRAPH_INTR_EN                                0x00000140
-#   define NV_PGRAPH_INTR_EN_NOTIFY                           (1 << 0)
-#   define NV_PGRAPH_INTR_EN_MISSING_HW                       (1 << 4)
-#   define NV_PGRAPH_INTR_EN_TLB_PRESENT_DMA_R                (1 << 6)
-#   define NV_PGRAPH_INTR_EN_TLB_PRESENT_DMA_W                (1 << 7)
-#   define NV_PGRAPH_INTR_EN_TLB_PRESENT_TEX_A                (1 << 8)
-#   define NV_PGRAPH_INTR_EN_TLB_PRESENT_TEX_B                (1 << 9)
-#   define NV_PGRAPH_INTR_EN_TLB_PRESENT_VTX                 (1 << 10)
-#   define NV_PGRAPH_INTR_EN_CONTEXT_SWITCH                  (1 << 12)
-#   define NV_PGRAPH_INTR_EN_STATE3D                         (1 << 13)
-#   define NV_PGRAPH_INTR_EN_BUFFER_NOTIFY                   (1 << 16)
-#   define NV_PGRAPH_INTR_EN_ERROR                           (1 << 20)
-#   define NV_PGRAPH_INTR_EN_SINGLE_STEP                     (1 << 24)
-#define NV_PGRAPH_CTX_CONTROL                            0x00000144
-#   define NV_PGRAPH_CTX_CONTROL_MINIMUM_TIME                 0x00000003
-#   define NV_PGRAPH_CTX_CONTROL_TIME                           (1 << 8)
-#   define NV_PGRAPH_CTX_CONTROL_CHID                          (1 << 16)
-#   define NV_PGRAPH_CTX_CONTROL_CHANGE                        (1 << 20)
-#   define NV_PGRAPH_CTX_CONTROL_SWITCHING                     (1 << 24)
-#   define NV_PGRAPH_CTX_CONTROL_DEVICE                        (1 << 28)
-#define NV_PGRAPH_CTX_USER                               0x00000148
-#   define NV_PGRAPH_CTX_USER_CHANNEL_3D                        (1 << 0)
-#   define NV_PGRAPH_CTX_USER_CHANNEL_3D_VALID                  (1 << 4)
-#   define NV_PGRAPH_CTX_USER_SUBCH                           0x0000E000
-#   define NV_PGRAPH_CTX_USER_CHID                            0x1F000000
-#   define NV_PGRAPH_CTX_USER_SINGLE_STEP                      (1 << 31)
-#define NV_PGRAPH_CTX_SWITCH1                            0x0000014C
-#   define NV_PGRAPH_CTX_SWITCH1_GRCLASS                      0x000000FF
-#   define NV_PGRAPH_CTX_SWITCH1_CHROMA_KEY                    (1 << 12)
-#   define NV_PGRAPH_CTX_SWITCH1_SWIZZLE                       (1 << 14)
-#   define NV_PGRAPH_CTX_SWITCH1_PATCH_CONFIG                 0x00038000
-#   define NV_PGRAPH_CTX_SWITCH1_SYNCHRONIZE                   (1 << 18)
-#   define NV_PGRAPH_CTX_SWITCH1_ENDIAN_MODE                   (1 << 19)
-#   define NV_PGRAPH_CTX_SWITCH1_CLASS_TYPE                    (1 << 22)
-#   define NV_PGRAPH_CTX_SWITCH1_SINGLE_STEP                   (1 << 23)
-#   define NV_PGRAPH_CTX_SWITCH1_PATCH_STATUS                  (1 << 24)
-#   define NV_PGRAPH_CTX_SWITCH1_CONTEXT_SURFACE0              (1 << 25)
-#   define NV_PGRAPH_CTX_SWITCH1_CONTEXT_SURFACE1              (1 << 26)
-#   define NV_PGRAPH_CTX_SWITCH1_CONTEXT_PATTERN               (1 << 27)
-#   define NV_PGRAPH_CTX_SWITCH1_CONTEXT_ROP                   (1 << 28)
-#   define NV_PGRAPH_CTX_SWITCH1_CONTEXT_BETA1                 (1 << 29)
-#   define NV_PGRAPH_CTX_SWITCH1_CONTEXT_BETA4                 (1 << 30)
-#   define NV_PGRAPH_CTX_SWITCH1_VOLATILE_RESET                (1 << 31)
-#define NV_PGRAPH_TRAPPED_ADDR                           0x00000704
-#   define NV_PGRAPH_TRAPPED_ADDR_MTHD                        0x00001FFF
-#   define NV_PGRAPH_TRAPPED_ADDR_SUBCH                       0x00070000
-#   define NV_PGRAPH_TRAPPED_ADDR_CHID                        0x01F00000
-#   define NV_PGRAPH_TRAPPED_ADDR_DHV                         0x10000000
-#define NV_PGRAPH_TRAPPED_DATA_LOW                       0x00000708
-#define NV_PGRAPH_INCREMENT                              0x0000071C
-#   define NV_PGRAPH_INCREMENT_READ_BLIT                        (1 << 0)
-#   define NV_PGRAPH_INCREMENT_READ_3D                          (1 << 1)
-#define NV_PGRAPH_FIFO                                   0x00000720
-#   define NV_PGRAPH_FIFO_ACCESS                                (1 << 0)
-#define NV_PGRAPH_CHANNEL_CTX_TABLE                      0x00000780
-#   define NV_PGRAPH_CHANNEL_CTX_TABLE_INST                   0x0000FFFF
-#define NV_PGRAPH_CHANNEL_CTX_POINTER                    0x00000784
-#   define NV_PGRAPH_CHANNEL_CTX_POINTER_INST                 0x0000FFFF
-#define NV_PGRAPH_CHANNEL_CTX_TRIGGER                    0x00000788
-#   define NV_PGRAPH_CHANNEL_CTX_TRIGGER_READ_IN                (1 << 0)
-#   define NV_PGRAPH_CHANNEL_CTX_TRIGGER_WRITE_OUT              (1 << 1)
-#define NV_PGRAPH_CSV0_D                                 0x00000FB4
-#   define NV_PGRAPH_CSV0_D_MODE                                0xC0000000
-#   define NV_PGRAPH_CSV0_D_RANGE_MODE                          (1 << 18)
-#define NV_PGRAPH_CSV0_C                                 0x00000FB8
-#define NV_PGRAPH_CSV1_B                                 0x00000FBC
-#define NV_PGRAPH_CSV1_A                                 0x00000FC0
-#define NV_PGRAPH_CLEARRECTX                             0x00001864
-#       define NV_PGRAPH_CLEARRECTX_XMIN                          0x00000FFF
-#       define NV_PGRAPH_CLEARRECTX_XMAX                          0x0FFF0000
-#define NV_PGRAPH_CLEARRECTY                             0x00001868
-#       define NV_PGRAPH_CLEARRECTY_YMIN                          0x00000FFF
-#       define NV_PGRAPH_CLEARRECTY_YMAX                          0x0FFF0000
-#define NV_PGRAPH_COLORCLEARVALUE                        0x0000186C
-#define NV_PGRAPH_COMBINEFACTOR0                         0x00001880
-#define NV_PGRAPH_COMBINEFACTOR1                         0x000018A0
-#define NV_PGRAPH_COMBINEALPHAI0                         0x000018C0
-#define NV_PGRAPH_COMBINEALPHAO0                         0x000018E0
-#define NV_PGRAPH_COMBINECOLORI0                         0x00001900
-#define NV_PGRAPH_COMBINECOLORO0                         0x00001920
-#define NV_PGRAPH_COMBINECTL                             0x00001940
-#define NV_PGRAPH_COMBINESPECFOG0                        0x00001944
-#define NV_PGRAPH_COMBINESPECFOG1                        0x00001948
-#define NV_PGRAPH_CONTROL_1                              0x00001950
-#       define NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE             0xFF000000
-#define NV_PGRAPH_SHADERCTL                              0x00001998
-#define NV_PGRAPH_SHADERPROG                             0x0000199C
-#define NV_PGRAPH_SPECFOGFACTOR0                         0x000019AC
-#define NV_PGRAPH_SPECFOGFACTOR1                         0x000019B0
-#define NV_PGRAPH_ZSTENCILCLEARVALUE                     0x00001A88
-#define NV_PGRAPH_ZCLIPMAX                               0x00001ABC
-#define NV_PGRAPH_ZCLIPMIN                               0x00001A90
-
-#define NV_PCRTC_INTR_0                                  0x00000100
-#   define NV_PCRTC_INTR_0_VBLANK                               (1 << 0)
-#define NV_PCRTC_INTR_EN_0                               0x00000140
-#   define NV_PCRTC_INTR_EN_0_VBLANK                            (1 << 0)
-#define NV_PCRTC_START                                   0x00000800
-#define NV_PCRTC_CONFIG                                  0x00000804
-
-
-#define NV_PVIDEO_INTR                                   0x00000100
-#   define NV_PVIDEO_INTR_BUFFER_0                              (1 << 0)
-#   define NV_PVIDEO_INTR_BUFFER_1                              (1 << 4)
-#define NV_PVIDEO_INTR_EN                                0x00000140
-#   define NV_PVIDEO_INTR_EN_BUFFER_0                           (1 << 0)
-#   define NV_PVIDEO_INTR_EN_BUFFER_1                           (1 << 4)
-#define NV_PVIDEO_BUFFER                                 0x00000700
-#   define NV_PVIDEO_BUFFER_0_USE                               (1 << 0)
-#   define NV_PVIDEO_BUFFER_1_USE                               (1 << 4)
-#define NV_PVIDEO_STOP                                   0x00000704
-#define NV_PVIDEO_BASE                                   0x00000900
-#define NV_PVIDEO_LIMIT                                  0x00000908
-#define NV_PVIDEO_LUMINANCE                              0x00000910
-#define NV_PVIDEO_CHROMINANCE                            0x00000918
-#define NV_PVIDEO_OFFSET                                 0x00000920
-#define NV_PVIDEO_SIZE_IN                                0x00000928
-#   define NV_PVIDEO_SIZE_IN_WIDTH                            0x000007FF
-#   define NV_PVIDEO_SIZE_IN_HEIGHT                           0x07FF0000
-#define NV_PVIDEO_POINT_IN                               0x00000930
-#   define NV_PVIDEO_POINT_IN_S                               0x00007FFF
-#   define NV_PVIDEO_POINT_IN_T                               0xFFFE0000
-#define NV_PVIDEO_DS_DX                                  0x00000938
-#define NV_PVIDEO_DT_DY                                  0x00000940
-#define NV_PVIDEO_POINT_OUT                              0x00000948
-#   define NV_PVIDEO_POINT_OUT_X                              0x00000FFF
-#   define NV_PVIDEO_POINT_OUT_Y                              0x0FFF0000
-#define NV_PVIDEO_SIZE_OUT                               0x00000950
-#   define NV_PVIDEO_SIZE_OUT_WIDTH                           0x00000FFF
-#   define NV_PVIDEO_SIZE_OUT_HEIGHT                          0x0FFF0000
-#define NV_PVIDEO_FORMAT                                 0x00000958
-#   define NV_PVIDEO_FORMAT_PITCH                             0x00001FFF
-#   define NV_PVIDEO_FORMAT_COLOR                             0x00030000
-#       define NV_PVIDEO_FORMAT_COLOR_LE_CR8YB8CB8YA8             1
-#   define NV_PVIDEO_FORMAT_DISPLAY                            (1 << 20)
-
-
-#define NV_PTIMER_INTR_0                                 0x00000100
-#   define NV_PTIMER_INTR_0_ALARM                               (1 << 0)
-#define NV_PTIMER_INTR_EN_0                              0x00000140
-#   define NV_PTIMER_INTR_EN_0_ALARM                            (1 << 0)
-#define NV_PTIMER_NUMERATOR                              0x00000200
-#define NV_PTIMER_DENOMINATOR                            0x00000210
-#define NV_PTIMER_TIME_0                                 0x00000400
-#define NV_PTIMER_TIME_1                                 0x00000410
-#define NV_PTIMER_ALARM_0                                0x00000420
-
-
-#define NV_PFB_CFG0                                      0x00000200
-#   define NV_PFB_CFG0_PART                                   0x00000003
-#define NV_PFB_CSTATUS                                   0x0000020C
-#define NV_PFB_WBC                                       0x00000410
-#   define NV_PFB_WBC_FLUSH                                     (1 << 16)
-
-
-#define NV_PRAMDAC_NVPLL_COEFF                           0x00000500
-#   define NV_PRAMDAC_NVPLL_COEFF_MDIV                        0x000000FF
-#   define NV_PRAMDAC_NVPLL_COEFF_NDIV                        0x0000FF00
-#   define NV_PRAMDAC_NVPLL_COEFF_PDIV                        0x00070000
-#define NV_PRAMDAC_MPLL_COEFF                            0x00000504
-#   define NV_PRAMDAC_MPLL_COEFF_MDIV                         0x000000FF
-#   define NV_PRAMDAC_MPLL_COEFF_NDIV                         0x0000FF00
-#   define NV_PRAMDAC_MPLL_COEFF_PDIV                         0x00070000
-#define NV_PRAMDAC_VPLL_COEFF                            0x00000508
-#   define NV_PRAMDAC_VPLL_COEFF_MDIV                         0x000000FF
-#   define NV_PRAMDAC_VPLL_COEFF_NDIV                         0x0000FF00
-#   define NV_PRAMDAC_VPLL_COEFF_PDIV                         0x00070000
-#define NV_PRAMDAC_PLL_TEST_COUNTER                      0x00000514
-#   define NV_PRAMDAC_PLL_TEST_COUNTER_NOOFIPCLKS             0x000003FF
-#   define NV_PRAMDAC_PLL_TEST_COUNTER_VALUE                  0x0000FFFF
-#   define NV_PRAMDAC_PLL_TEST_COUNTER_ENABLE                  (1 << 16)
-#   define NV_PRAMDAC_PLL_TEST_COUNTER_RESET                   (1 << 20)
-#   define NV_PRAMDAC_PLL_TEST_COUNTER_SOURCE                 0x03000000
-#   define NV_PRAMDAC_PLL_TEST_COUNTER_VPLL2_LOCK              (1 << 27)
-#   define NV_PRAMDAC_PLL_TEST_COUNTER_PDIV_RST                (1 << 28)
-#   define NV_PRAMDAC_PLL_TEST_COUNTER_NVPLL_LOCK              (1 << 29)
-#   define NV_PRAMDAC_PLL_TEST_COUNTER_MPLL_LOCK               (1 << 30)
-#   define NV_PRAMDAC_PLL_TEST_COUNTER_VPLL_LOCK               (1 << 31)
-
-
-#define NV_USER_DMA_PUT                                  0x40
-#define NV_USER_DMA_GET                                  0x44
-#define NV_USER_REF                                      0x48
-
-
-
-/* DMA objects */
-#define NV_DMA_FROM_MEMORY_CLASS                         0x02
-#define NV_DMA_TO_MEMORY_CLASS                           0x03
-#define NV_DMA_IN_MEMORY_CLASS                           0x3d
-
-#define NV_DMA_CLASS                                          0x00000FFF
-#define NV_DMA_PAGE_TABLE                                      (1 << 12)
-#define NV_DMA_PAGE_ENTRY                                      (1 << 13)
-#define NV_DMA_FLAGS_ACCESS                                    (1 << 14)
-#define NV_DMA_FLAGS_MAPPING_COHERENCY                         (1 << 15)
-#define NV_DMA_TARGET                                         0x00030000
-#   define NV_DMA_TARGET_NVM                                      0x00000000
-#   define NV_DMA_TARGET_NVM_TILED                                0x00010000
-#   define NV_DMA_TARGET_PCI                                      0x00020000
-#   define NV_DMA_TARGET_AGP                                      0x00030000
-#define NV_DMA_ADJUST                                         0xFFF00000
-
-#define NV_DMA_ADDRESS                                        0xFFFFF000
-
-
-#define NV_RAMHT_HANDLE                                       0xFFFFFFFF
-#define NV_RAMHT_INSTANCE                                     0x0000FFFF
-#define NV_RAMHT_ENGINE                                       0x00030000
-#   define NV_RAMHT_ENGINE_SW                                     0x00000000
-#   define NV_RAMHT_ENGINE_GRAPHICS                               0x00010000
-#   define NV_RAMHT_ENGINE_DVD                                    0x00020000
-#define NV_RAMHT_CHID                                         0x1F000000
-#define NV_RAMHT_STATUS                                       0x80000000
-
-
-
-/* graphic classes and methods */
-#define NV_SET_OBJECT                                        0x00000000
-
-
-#define NV_CONTEXT_SURFACES_2D                           0x0062
-#   define NV062_SET_CONTEXT_DMA_IMAGE_SOURCE                 0x00620184
-#   define NV062_SET_CONTEXT_DMA_IMAGE_DESTIN                 0x00620188
-#   define NV062_SET_COLOR_FORMAT                             0x00620300
-#       define NV062_SET_COLOR_FORMAT_LE_Y8                    0x01
-#       define NV062_SET_COLOR_FORMAT_LE_A8R8G8B8              0x0A
-#   define NV062_SET_PITCH                                    0x00620304
-#   define NV062_SET_OFFSET_SOURCE                            0x00620308
-#   define NV062_SET_OFFSET_DESTIN                            0x0062030C
-
-#define NV_IMAGE_BLIT                                    0x009F
-#   define NV09F_SET_CONTEXT_SURFACES                         0x009F019C
-#   define NV09F_SET_OPERATION                                0x009F02FC
-#       define NV09F_SET_OPERATION_SRCCOPY                        3
-#   define NV09F_CONTROL_POINT_IN                             0x009F0300
-#   define NV09F_CONTROL_POINT_OUT                            0x009F0304
-#   define NV09F_SIZE                                         0x009F0308
-
-
-#define NV_KELVIN_PRIMITIVE                              0x0097
-#   define NV097_NO_OPERATION                                 0x00970100
-#   define NV097_WAIT_FOR_IDLE                                0x00970110
-#   define NV097_FLIP_STALL                                   0x00970130
-#   define NV097_SET_CONTEXT_DMA_NOTIFIES                     0x00970180
-#   define NV097_SET_CONTEXT_DMA_A                            0x00970184
-#   define NV097_SET_CONTEXT_DMA_B                            0x00970188
-#   define NV097_SET_CONTEXT_DMA_STATE                        0x00970190
-#   define NV097_SET_CONTEXT_DMA_COLOR                        0x00970194
-#   define NV097_SET_CONTEXT_DMA_ZETA                         0x00970198
-#   define NV097_SET_CONTEXT_DMA_VERTEX_A                     0x0097019C
-#   define NV097_SET_CONTEXT_DMA_VERTEX_B                     0x009701A0
-#   define NV097_SET_CONTEXT_DMA_SEMAPHORE                    0x009701A4
-#   define NV097_SET_SURFACE_CLIP_HORIZONTAL                  0x00970200
-#       define NV097_SET_SURFACE_CLIP_HORIZONTAL_X                0x0000FFFF
-#       define NV097_SET_SURFACE_CLIP_HORIZONTAL_WIDTH            0xFFFF0000
-#   define NV097_SET_SURFACE_CLIP_VERTICAL                    0x00970204
-#       define NV097_SET_SURFACE_CLIP_VERTICAL_Y                  0x0000FFFF
-#       define NV097_SET_SURFACE_CLIP_VERTICAL_HEIGHT             0xFFFF0000
-#   define NV097_SET_SURFACE_FORMAT                           0x00970208
-#       define NV097_SET_SURFACE_FORMAT_COLOR                     0x0000000F
-#           define NV097_SET_SURFACE_FORMAT_COLOR_LE_X1R5G5B5_Z1R5G5B5     0x01
-#           define NV097_SET_SURFACE_FORMAT_COLOR_LE_X1R5G5B5_O1R5G5B5     0x02
-#           define NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5                0x03
-#           define NV097_SET_SURFACE_FORMAT_COLOR_LE_X8R8G8B8_Z8R8G8B8     0x04
-#           define NV097_SET_SURFACE_FORMAT_COLOR_LE_X8R8G8B8_O8R8G8B8     0x05
-#           define NV097_SET_SURFACE_FORMAT_COLOR_LE_X1A7R8G8B8_Z1A7R8G8B8 0x06
-#           define NV097_SET_SURFACE_FORMAT_COLOR_LE_X1A7R8G8B8_O1A7R8G8B8 0x07
-#           define NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8              0x08
-#           define NV097_SET_SURFACE_FORMAT_COLOR_LE_B8                    0x09
-#           define NV097_SET_SURFACE_FORMAT_COLOR_LE_G8B8                  0x0A
-#       define NV097_SET_SURFACE_FORMAT_ZETA                      0x000000F0
-#           define NV097_SET_SURFACE_FORMAT_ZETA_Z16                       0x01
-#           define NV097_SET_SURFACE_FORMAT_ZETA_Z24S8                     0x02
-#   define NV097_SET_SURFACE_PITCH                            0x0097020C
-#       define NV097_SET_SURFACE_PITCH_COLOR                      0x0000FFFF
-#       define NV097_SET_SURFACE_PITCH_ZETA                       0xFFFF0000
-#   define NV097_SET_SURFACE_COLOR_OFFSET                     0x00970210
-#   define NV097_SET_SURFACE_ZETA_OFFSET                      0x00970214
-#   define NV097_SET_COMBINER_ALPHA_ICW                       0x00970260
-#   define NV097_SET_COMBINER_SPECULAR_FOG_CW0                0x00970288
-#   define NV097_SET_COMBINER_SPECULAR_FOG_CW1                0x0097028C
-#   define NV097_SET_COLOR_MASK                               0x00970358
-#       define NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE            0xFF000000
-#           define NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE_FALSE           0x00
-#           define NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE_TRUE            0x01
-#       define NV097_SET_COLOR_MASK_RED_WRITE_ENABLE              0x00FF0000
-#           define NV097_SET_COLOR_MASK_RED_WRITE_ENABLE_FALSE             0x00
-#           define NV097_SET_COLOR_MASK_RED_WRITE_ENABLE_TRUE              0x01
-#       define NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE            0x0000FF00
-#           define NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE_FALSE           0x00
-#           define NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE_TRUE            0x01
-#       define NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE             0x000000FF
-#           define NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE_FALSE            0x00
-#           define NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE_TRUE             0x01
-#   define NV097_SET_STENCIL_MASK                             0x00970360
-#   define NV097_SET_CLIP_MIN                                 0x00970394
-#   define NV097_SET_CLIP_MAX                                 0x00970398
-#   define NV097_SET_TEXTURE_MATRIX_ENABLE                    0x00970420 /* 4 Slots, bool */
-#   define NV097_SET_COMPOSITE_MATRIX                         0x00970680
-#   define NV097_SET_TEXTURE_MATRIX0                          0x009706c0
-#   define NV097_SET_TEXTURE_MATRIX1                          0x00970700
-#   define NV097_SET_TEXTURE_MATRIX2                          0x00970740
-#   define NV097_SET_TEXTURE_MATRIX3                          0x00970780
-#   define NV097_SET_VIEWPORT_OFFSET                          0x00970A20
-#   define NV097_SET_COMBINER_FACTOR0                         0x00970A60
-#   define NV097_SET_COMBINER_FACTOR1                         0x00970A80
-#   define NV097_SET_COMBINER_ALPHA_OCW                       0x00970AA0
-#   define NV097_SET_COMBINER_COLOR_ICW                       0x00970AC0
-#   define NV097_SET_VIEWPORT_SCALE                           0x00970AF0
-#   define NV097_SET_TRANSFORM_PROGRAM                        0x00970B00
-#   define NV097_SET_TRANSFORM_CONSTANT                       0x00970B80
-#   define NV097_SET_VERTEX4F                                 0x00971518
-#   define NV097_SET_VERTEX_DATA_ARRAY_OFFSET                 0x00971720
-#   define NV097_SET_VERTEX_DATA_ARRAY_FORMAT                 0x00971760
-#       define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE            0x0000000F
-#           define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_D3D     0
-#           define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_S1         1
-#           define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F          2
-#           define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_OGL     3
-#           define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_S32K       5
-#           define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_CMP        6
-#       define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_SIZE            0x000000F0
-#       define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_STRIDE          0xFFFFFF00
-#   define NV097_SET_BEGIN_END                                0x009717fC
-#       define NV097_SET_BEGIN_END_OP_END                         0x00
-#       define NV097_SET_BEGIN_END_OP_POINTS                      0x01
-#       define NV097_SET_BEGIN_END_OP_LINES                       0x02
-#       define NV097_SET_BEGIN_END_OP_LINE_LOOP                   0x03
-#       define NV097_SET_BEGIN_END_OP_LINE_STRIP                  0x04
-#       define NV097_SET_BEGIN_END_OP_TRIANGLES                   0x05
-#       define NV097_SET_BEGIN_END_OP_TRIANGLE_STRIP              0x06
-#       define NV097_SET_BEGIN_END_OP_TRIANGLE_FAN                0x07
-#       define NV097_SET_BEGIN_END_OP_QUADS                       0x08
-#       define NV097_SET_BEGIN_END_OP_QUAD_STRIP                  0x09
-#       define NV097_SET_BEGIN_END_OP_POLYGON                     0x0A
-#   define NV097_ARRAY_ELEMENT16                              0x00971800
-#   define NV097_ARRAY_ELEMENT32                              0x00971808
-#   define NV097_DRAW_ARRAYS                                  0x00971810
-#       define NV097_DRAW_ARRAYS_COUNT                            0xFF000000
-#       define NV097_DRAW_ARRAYS_START_INDEX                      0x00FFFFFF
-#   define NV097_INLINE_ARRAY                                 0x00971818
-#   define NV097_SET_VERTEX_DATA4UB                           0x00971940
-#   define NV097_SET_TEXTURE_OFFSET                           0x00971B00
-#   define NV097_SET_TEXTURE_FORMAT                           0x00971B04
-#       define NV097_SET_TEXTURE_FORMAT_CONTEXT_DMA               0x00000003
-#       define NV097_SET_TEXTURE_FORMAT_DIMENSIONALITY            0x000000F0
-#       define NV097_SET_TEXTURE_FORMAT_COLOR                     0x0000FF00
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A1R5G5B5       0x02
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_X1R5G5B5       0x03
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A4R4G4B4       0x04
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_R5G6B5         0x05
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8R8G8B8       0x06
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_X8R8G8B8       0x07
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_I8_A8R8G8B8    0x0B
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_L_DXT1_A1R5G5B5   0x0C
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_L_DXT23_A8R8G8B8  0x0E
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_L_DXT45_A8R8G8B8  0x0F
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_R5G6B5   0x11
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8 0x12
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8             0x19
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_X8R8G8B8 0x1E
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_LC_IMAGE_CR8YB8CB8YA8 0x24
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_Y16_FIXED 0x30
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8B8G8R8       0x3A
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8B8G8R8 0x3F
-#       define NV097_SET_TEXTURE_FORMAT_MIPMAP_LEVELS             0x000F0000
-#       define NV097_SET_TEXTURE_FORMAT_BASE_SIZE_U               0x00F00000
-#       define NV097_SET_TEXTURE_FORMAT_BASE_SIZE_V               0x0F000000
-#       define NV097_SET_TEXTURE_FORMAT_BASE_SIZE_P               0xF0000000
-#   define NV097_SET_TEXTURE_ADDRESS                          0x00971B08
-#       define NV097_SET_TEXTURE_ADDRESS_U                        0x0000000F
-#       define NV097_SET_TEXTURE_ADDRESS_CYLWRAP_U                0x000000F0 /* Bool */
-#       define NV097_SET_TEXTURE_ADDRESS_V                        0x00000F00 /* Bool */
-#       define NV097_SET_TEXTURE_ADDRESS_CYLWRAP_V                0x0000F000
-#       define NV097_SET_TEXTURE_ADDRESS_P                        0x000F0000
-#       define NV097_SET_TEXTURE_ADDRESS_CYLWRAP_P                0x00F00000 /* Bool */
-#       define NV097_SET_TEXTURE_ADDRESS_CYLWRAP_Q                0xFF000000 /* Bool */
-            /* Used in NV097_SET_TEXTURE_ADDRESS_{ U, V, P } */
-#           define NV097_SET_TEXTURE_ADDRESS_WRAP_WRAP              0x1
-#           define NV097_SET_TEXTURE_ADDRESS_WRAP_MIRROR            0x2
-#           define NV097_SET_TEXTURE_ADDRESS_WRAP_CLAMP_TO_EDGE     0x3
-#           define NV097_SET_TEXTURE_ADDRESS_WRAP_BORDER            0x4
-#           define NV097_SET_TEXTURE_ADDRESS_WRAP_CLAMP_OGL         0x5
-#   define NV097_SET_TEXTURE_CONTROL0                         0x00971B0C
-#       define NV097_SET_TEXTURE_CONTROL0_ENABLE                 (1 << 30)
-#       define NV097_SET_TEXTURE_CONTROL0_MIN_LOD_CLAMP           0x3FFC0000
-#       define NV097_SET_TEXTURE_CONTROL0_MAX_LOD_CLAMP           0x0003FFC0
-#   define NV097_SET_TEXTURE_CONTROL1                         0x00971B10
-#       define NV097_SET_TEXTURE_CONTROL1_IMAGE_PITCH             0xFFFF0000
-#   define NV097_SET_TEXTURE_FILTER                           0x00971B14
-#       define NV097_SET_TEXTURE_FILTER_MIPMAP_LOD_BIAS           0x00001FFF
-#       define NV097_SET_TEXTURE_FILTER_MIN                       0x00FF0000
-#       define NV097_SET_TEXTURE_FILTER_MAG                       0x0F000000
-#   define NV097_SET_TEXTURE_IMAGE_RECT                       0x00971B1C
-#       define NV097_SET_TEXTURE_IMAGE_RECT_WIDTH                 0xFFFF0000
-#       define NV097_SET_TEXTURE_IMAGE_RECT_HEIGHT                0x0000FFFF
-#   define NV097_SET_SEMAPHORE_OFFSET                         0x00971D6C
-#   define NV097_BACK_END_WRITE_SEMAPHORE_RELEASE             0x00971D70
-#   define NV097_SET_ZSTENCIL_CLEAR_VALUE                     0x00971D8C
-#   define NV097_SET_COLOR_CLEAR_VALUE                        0x00971D90
-#   define NV097_CLEAR_SURFACE                                0x00971D94
-#       define NV097_CLEAR_SURFACE_ZETA                           0x00000003
-#       define NV097_CLEAR_SURFACE_Z                              (1 << 0)
-#       define NV097_CLEAR_SURFACE_STENCIL                        (1 << 1)
-#       define NV097_CLEAR_SURFACE_COLOR                          0x000000F0
-#       define NV097_CLEAR_SURFACE_R                              (1 << 4)
-#       define NV097_CLEAR_SURFACE_G                              (1 << 5)
-#       define NV097_CLEAR_SURFACE_B                              (1 << 6)
-#       define NV097_CLEAR_SURFACE_A                              (1 << 7)
-#   define NV097_SET_CLEAR_RECT_HORIZONTAL                    0x00971D98
-#   define NV097_SET_CLEAR_RECT_VERTICAL                      0x00971D9C
-#   define NV097_SET_SPECULAR_FOG_FACTOR                      0x00971E20
-#   define NV097_SET_COMBINER_COLOR_OCW                       0x00971E40
-#   define NV097_SET_COMBINER_CONTROL                         0x00971E60
-#   define NV097_SET_SHADER_STAGE_PROGRAM                     0x00971E70
-#   define NV097_SET_SHADER_OTHER_STAGE_INPUT                 0x00971E78
-#   define NV097_SET_TRANSFORM_EXECUTION_MODE                 0x00971E94
-#       define NV097_SET_TRANSFORM_EXECUTION_MODE_MODE            0x00000003
-#       define NV097_SET_TRANSFORM_EXECUTION_MODE_RANGE_MODE      0xFFFFFFFC
-#   define NV097_SET_TRANSFORM_PROGRAM_CXT_WRITE_EN           0x00971E98
-#   define NV097_SET_TRANSFORM_PROGRAM_LOAD                   0x00971E9C
-#   define NV097_SET_TRANSFORM_PROGRAM_START                  0x00971EA0
-#   define NV097_SET_TRANSFORM_CONSTANT_LOAD                  0x00971EA4
-
-#   define NV097_SET_SHADE_MODE                               0x0097037c
-#       define NV097_SET_SHADE_MODE_FLAT                          0x00001D00
-#       define NV097_SET_SHADE_MODE_SMOOTH                        0x00001D01
-
-#   define NV097_SET_DEPTH_MASK                               0x0097035c
-#       define NV097_SET_DEPTH_MASK_FALSE                         0x00000000
-#       define NV097_SET_DEPTH_MASK_TRUE                          0x00000001
-
-#   define NV097_SET_ALPHA_TEST_ENABLE                        0x00970300
-#       define NV097_SET_ALPHA_TEST_ENABLE_FALSE                  0x00000000
-#       define NV097_SET_ALPHA_TEST_ENABLE_TRUE                   0x00000001
-#   define NV097_SET_BLEND_ENABLE                             0x00970304
-#       define NV097_SET_BLEND_ENABLE_FALSE                       0x00000000
-#       define NV097_SET_BLEND_ENABLE_TRUE                        0x00000001
-#   define NV097_SET_CULL_FACE_ENABLE                         0x00970308
-#       define NV097_SET_CULL_FACE_ENABLE_FALSE                   0x00000000
-#       define NV097_SET_CULL_FACE_ENABLE_TRUE                    0x00000001
-#   define NV097_SET_DEPTH_TEST_ENABLE                        0x0097030c
-#       define NV097_SET_DEPTH_TEST_ENABLE_FALSE                  0x00000000
-#       define NV097_SET_DEPTH_TEST_ENABLE_TRUE                   0x00000001
-
-#   define NV097_SET_ALPHA_REF                               0x00970340
-
-// These are comparision functions and use map_gl_compare_func
-#   define NV097_SET_DEPTH_FUNC                              0x00970354
-#   define NV097_SET_ALPHA_FUNC                              0x0097033c
-
-#   define NV097_SET_BLEND_FUNC_SFACTOR                      0x00970344
-#       define NV097_SET_BLEND_FUNC_SFACTOR_ZERO                  0x00000000
-#       define NV097_SET_BLEND_FUNC_SFACTOR_ONE                   0x00000001
-#       define NV097_SET_BLEND_FUNC_SFACTOR_SRC_COLOR             0x00000300
-#       define NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_SRC_COLOR   0x00000301
-#       define NV097_SET_BLEND_FUNC_SFACTOR_SRC_ALPHA             0x00000302
-#       define NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_SRC_ALPHA   0x00000303
-#       define NV097_SET_BLEND_FUNC_SFACTOR_DST_ALPHA             0x00000304
-#       define NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_DST_ALPHA   0x00000305
-#       define NV097_SET_BLEND_FUNC_SFACTOR_DST_COLOR             0x00000306
-#       define NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_DST_COLOR   0x00000307
-#       define NV097_SET_BLEND_FUNC_SFACTOR_SRC_ALPHA_SATURATE    0x00000308
-#       define NV097_SET_BLEND_FUNC_SFACTOR_CONSTANT_COLOR        0x00008001
-#       define NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_CONSTANT_COLOR 0x00008002
-#       define NV097_SET_BLEND_FUNC_SFACTOR_CONSTANT_ALPHA        0x00008003
-#       define NV097_SET_BLEND_FUNC_SFACTOR_ONE_MINUS_CONSTANT_ALPHA 0x00008004
-#   define NV097_SET_BLEND_FUNC_DFACTOR                      0x00970348
-#       define NV097_SET_BLEND_FUNC_DFACTOR_ZERO                  0x00000000
-#       define NV097_SET_BLEND_FUNC_DFACTOR_ONE                   0x00000001
-#       define NV097_SET_BLEND_FUNC_DFACTOR_SRC_COLOR             0x00000300
-#       define NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_SRC_COLOR   0x00000301
-#       define NV097_SET_BLEND_FUNC_DFACTOR_SRC_ALPHA             0x00000302
-#       define NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_SRC_ALPHA   0x00000303
-#       define NV097_SET_BLEND_FUNC_DFACTOR_DST_ALPHA             0x00000304
-#       define NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_DST_ALPHA   0x00000305
-#       define NV097_SET_BLEND_FUNC_DFACTOR_DST_COLOR             0x00000306
-#       define NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_DST_COLOR   0x00000307
-#       define NV097_SET_BLEND_FUNC_DFACTOR_SRC_ALPHA_SATURATE    0x00000308
-#       define NV097_SET_BLEND_FUNC_DFACTOR_CONSTANT_COLOR        0x00008001
-#       define NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_CONSTANT_COLOR 0x00008002
-#       define NV097_SET_BLEND_FUNC_DFACTOR_CONSTANT_ALPHA        0x00008003
-#       define NV097_SET_BLEND_FUNC_DFACTOR_ONE_MINUS_CONSTANT_ALPHA 0x00008004
-
-#   define NV097_SET_CULL_FACE                               0x0097039c
-#       define NV097_SET_CULL_FACE_FRONT                          0x00000404
-#       define NV097_SET_CULL_FACE_BACK                           0x00000405
-#       define NV097_SET_CULL_FACE_FRONT_AND_BACK                 0x00000408
-#   define NV097_SET_FRONT_FACE                              0x009703a0
-#       define NV097_SET_FRONT_FACE_CW                            0x00000900
-#       define NV097_SET_FRONT_FACE_CCW                           0x00000901
-
-#   define NV097_SET_EDGE_FLAG                               0x009716bc
-#       define NV097_SET_EDGE_FLAG_FALSE                          0x00000000
-#       define NV097_SET_EDGE_FLAG_TRUE                           0x00000001
+#include "nv2a_gpu_registers.h"
+#include "nv2a_gpu_methods.h"
 
 
 static const GLenum kelvin_primitive_map[] = {
@@ -744,10 +117,17 @@ static const GLenum kelvin_texture_min_filter_map[] = {
     0,
     GL_NEAREST,
     GL_LINEAR,
+#ifdef DEBUG_NV2A_GPU_DISABLE_MIPMAP
+    GL_LINEAR,
+    GL_LINEAR,
+    GL_LINEAR,
+    GL_LINEAR,
+#else
     GL_NEAREST_MIPMAP_NEAREST,
     GL_LINEAR_MIPMAP_NEAREST,
     GL_NEAREST_MIPMAP_LINEAR,
     GL_LINEAR_MIPMAP_LINEAR,
+#endif
     GL_LINEAR, /* TODO: Convolution filter... */
 };
 
@@ -758,6 +138,22 @@ static const GLenum kelvin_texture_mag_filter_map[] = {
     0,
     GL_LINEAR /* TODO: Convolution filter... */
 };
+
+/* Attribute conversion */
+
+static inline void* convert_cmp_to_f(unsigned int stride, size_t num_elements, const void* in) {
+#if 0
+    void* buffer = malloc(3*sizeof(float)*num_elements);
+    for(i = 0; i < num_elements; i++) {
+        r11g11b10f_to_float3(ldl_le_p(in),
+                             (float*)out);
+    }
+    return buffer;
+#endif
+return NULL;
+}
+
+/* Texture conversion */
 
 static inline void* convert_a8r8g8b8_to_a8r8g8b8(unsigned int w, unsigned int h, unsigned int pitch, unsigned int levels, const void* in)
 {
@@ -797,17 +193,17 @@ typedef struct ColorFormatInfo {
 
 static const ColorFormatInfo kelvin_color_format_map[66] = {
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A1R5G5B5] =
-        {2, false, GL_RGBA, GL_RGBA, GL_UNSIGNED_SHORT_1_5_5_5_REV},
+        {2, false, GL_RGBA, GL_BGRA, GL_UNSIGNED_SHORT_1_5_5_5_REV},
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_X1R5G5B5] =
-        {2, false, GL_RGB,  GL_RGBA, GL_UNSIGNED_SHORT_1_5_5_5_REV},
+        {2, false, GL_RGB,  GL_BGRA, GL_UNSIGNED_SHORT_1_5_5_5_REV},
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A4R4G4B4] =
-        {2, false, GL_RGBA, GL_RGBA, GL_UNSIGNED_SHORT_4_4_4_4_REV},
+        {2, false, GL_RGBA, GL_BGRA, GL_UNSIGNED_SHORT_4_4_4_4_REV},
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_R5G6B5] =
-        {2, false, GL_RGB, GL_RGB, GL_UNSIGNED_SHORT_5_6_5_REV},
+        {2, false, GL_RGB, GL_RGB, GL_UNSIGNED_SHORT_5_6_5},
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8R8G8B8] =
-        {4, false, GL_RGBA, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV},
+        {4, false, GL_RGBA, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV},
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_X8R8G8B8] =
-        {4, false, GL_RGB,  GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV},
+        {4, false, GL_RGB,  GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV },
 
     [NV097_SET_TEXTURE_FORMAT_COLOR_LC_IMAGE_CR8YB8CB8YA8] =
         {4, false, GL_RGB,  GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV, convert_cr8yb8cb8ya8_to_a8r8g8b8},
@@ -826,18 +222,18 @@ static const ColorFormatInfo kelvin_color_format_map[66] = {
     [NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_R5G6B5] =
         {2, true, GL_RGB, GL_RGB, GL_UNSIGNED_SHORT_5_6_5},
     [NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8] =
-        {4, true, GL_RGBA, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV},
+        {4, true, GL_RGBA, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV},
     /* TODO: how do opengl alpha textures work? */
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8] =
         {2, false, GL_RED,  GL_RED,  GL_UNSIGNED_BYTE},
     [NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_X8R8G8B8] =
-        {4, true, GL_RGB,  GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV},
+        {4, true, GL_RGB,  GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV},
     [NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_Y16_FIXED] =
         {2, true, GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_SHORT},
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8B8G8R8] =
-        {4, false, GL_RGBA, GL_ABGR_EXT, GL_UNSIGNED_BYTE },
+        {4, false, GL_RGBA, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV},
     [NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8B8G8R8] =
-        {4, true, GL_RGBA, GL_ABGR_EXT, GL_UNSIGNED_BYTE }
+        {4, true, GL_RGBA, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV},
 };
 
 
@@ -864,7 +260,6 @@ static const ColorFormatInfo kelvin_color_format_map[66] = {
 #define NV2A_GPU_NUM_SUBCHANNELS 8
 
 #define NV2A_GPU_MAX_BATCH_LENGTH 0xFFFF
-#define NV2A_GPU_VERTEXSHADER_SLOTS  32 /*???*/
 #define NV2A_GPU_MAX_VERTEXSHADER_LENGTH 136
 #define NV2A_GPU_VERTEXSHADER_CONSTANTS 192
 #define NV2A_GPU_VERTEXSHADER_ATTRIBUTES 16
@@ -928,6 +323,7 @@ typedef struct VertexAttribute {
     unsigned int count; /* number of components */
     uint32_t stride;
 
+    void(*converter)(void); //FIXME: Type..
     bool needs_conversion;
     uint8_t *converted_buffer;
     unsigned int converted_elements;
@@ -940,13 +336,12 @@ typedef struct VertexAttribute {
 
 typedef struct VertexShaderConstant {
     bool dirty;
-    uint32 data[4];
+    uint32_t data[4];
 } VertexShaderConstant;
 
 typedef struct VertexShader {
     bool dirty;
-    unsigned int program_length;
-    uint32_t program_data[NV2A_GPU_MAX_VERTEXSHADER_LENGTH];
+    uint32_t program_data[NV2A_GPU_MAX_VERTEXSHADER_LENGTH*4]; /* Each instruction is 16 byte */
 
     GLuint gl_program;
 } VertexShader;
@@ -1000,7 +395,7 @@ typedef struct ShaderState {
     bool rect_tex[4];
 
     /* vertex shader */
-    bool fixed_function;
+    guint vertex_shader_hash;
 
 } ShaderState;
 
@@ -1030,7 +425,7 @@ typedef struct KelvinState {
 
     unsigned int vertexshader_start_slot;
     unsigned int vertexshader_load_slot;
-    VertexShader vertexshaders[NV2A_GPU_VERTEXSHADER_SLOTS];
+    VertexShader vertexshader;
 
     unsigned int constant_load_slot;
     VertexShaderConstant constants[NV2A_GPU_VERTEXSHADER_CONSTANTS];
@@ -1137,8 +532,11 @@ typedef struct PGRAPHState {
 
     hwaddr dma_color, dma_zeta;
     Surface surface_color, surface_zeta;
-    unsigned int surface_x, surface_y;
-    unsigned int surface_width, surface_height;
+    uint8_t surface_type;
+    uint8_t surface_anti_aliasing;
+    uint8_t surface_swizzle_width_shift, surface_swizzle_height_shift;
+    unsigned int clip_x, clip_y;
+    unsigned int clip_width, clip_height;
     uint32_t color_mask;
     bool depth_mask;
 
@@ -1305,6 +703,9 @@ typedef struct NV2A_GPUState {
     } user;
 
 } NV2A_GPUState;
+
+
+#include "hw/xbox/nv2a_gpu_debugger.h"
 
 
 #define NV2A_GPU_DEVICE(obj) \
@@ -1647,11 +1048,9 @@ static void load_graphics_object(NV2A_GPUState *d, hwaddr instance_address,
     case NV_KELVIN_PRIMITIVE:
         kelvin = &obj->data.kelvin;
 
-        /* generate vertex programs */
-        for (i = 0; i < NV2A_GPU_VERTEXSHADER_SLOTS; i++) {
-            VertexShader *shader = &kelvin->vertexshaders[i];
-            glGenProgramsARB(1, &shader->gl_program);
-        }
+        /* generate vertex program */
+        VertexShader *shader = &kelvin->vertexshader;
+        glGenProgramsARB(1, &shader->gl_program);
         assert(glGetError() == GL_NO_ERROR);
 
         /* temp hack? */
@@ -1770,7 +1169,7 @@ static void kelvin_bind_vertex_attributes(NV2A_GPUState *d,
 {
     int i;
 
-    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, "NV2A: kelvin_bind_vertex_attributes");
+    debugger_push_group("NV2A: kelvin_bind_vertex_attributes");
 
     for (i=0; i<NV2A_GPU_VERTEXSHADER_ATTRIBUTES; i++) {
         VertexAttribute *attribute = &kelvin->vertex_attributes[i];
@@ -1781,6 +1180,7 @@ static void kelvin_bind_vertex_attributes(NV2A_GPUState *d,
                 hwaddr dma_len;
                 uint8_t *vertex_data;
 
+                //TODO: Load (and even map..) DMA Object once and re-use later, however, we don't know if the object is valid so we must delay the load until we want to use it
                 /* TODO: cache coherence */
                 if (attribute->dma_select) {
                     vertex_data = nv_dma_load_and_map(d, kelvin->dma_vertex_b, &dma_len);
@@ -1789,7 +1189,6 @@ static void kelvin_bind_vertex_attributes(NV2A_GPUState *d,
                 }
                 assert(attribute->offset < dma_len);
                 vertex_data += attribute->offset;
-
                 glVertexAttribPointer(i,
                     attribute->count,
                     attribute->gl_type,
@@ -1804,167 +1203,15 @@ static void kelvin_bind_vertex_attributes(NV2A_GPUState *d,
         }
     }
 
-    glPopDebugGroup();
+    debugger_pop_group();
 
-}
-
-static void kelvin_bind_vertex_program(KelvinState *kelvin)
-{
-    int i;
-    VertexShader *shader;
-
-    shader = &kelvin->vertexshaders[kelvin->vertexshader_start_slot];
-
-    glBindProgramARB(GL_VERTEX_PROGRAM_ARB, shader->gl_program);
-
-    if (shader->dirty) {
-        QString *program_code = vsh_translate(VSH_VERSION_XVS,
-                                             shader->program_data,
-                                             shader->program_length);
-        const char* program_code_str = qstring_get_str(program_code);
-
-        NV2A_GPU_DPRINTF("bind vertex program %d, code:\n%s\n",
-                     kelvin->vertexshader_start_slot,
-                     program_code_str);
-
-        glProgramStringARB(GL_VERTEX_PROGRAM_ARB,
-                           GL_PROGRAM_FORMAT_ASCII_ARB,
-                           strlen(program_code_str),
-                           program_code_str);
-
-        /* Check it compiled */
-        GLint pos;
-        glGetIntegerv(GL_PROGRAM_ERROR_POSITION_ARB, &pos);
-        if (pos != -1) {
-            fprintf(stderr, "nv2a: vertex program compilation failed:\n"
-                            "      pos %d, %s\n",
-                    pos, glGetString(GL_PROGRAM_ERROR_STRING_ARB));
-            fprintf(stderr, "ucode:\n");
-            for (i=0; i<shader->program_length; i++) {
-                fprintf(stderr, "    0x%08x,\n", shader->program_data[i]);
-            }
-            abort();
-        }
-
-        /* Check we're within resource limits */
-        GLint native;
-        glGetProgramivARB(GL_VERTEX_PROGRAM_ARB,
-                          GL_PROGRAM_UNDER_NATIVE_LIMITS_ARB,
-                          &native);
-        assert(native);
-
-        assert(glGetError() == GL_NO_ERROR);
-
-        QDECREF(program_code);
-        shader->dirty = false;
-    }
-
-    /* load constants */
-    for (i=0; i<NV2A_GPU_VERTEXSHADER_CONSTANTS; i++) {
-        VertexShaderConstant *constant = &kelvin->constants[i];
-        if (!constant->dirty) continue;
-
-        glProgramEnvParameter4fvARB(GL_VERTEX_PROGRAM_ARB,
-                                    i,
-                                    (const GLfloat*)constant->data);
-        constant->dirty = false;
-    }
-
-    assert(glGetError() == GL_NO_ERROR);
-}
-
-
-static void unswizzle_rect(
-    uint8_t *src_buf,
-    unsigned int width,
-    unsigned int height,
-    unsigned int depth,
-    uint8_t *dst_buf,
-    unsigned int pitch,
-    unsigned int bytes_per_pixel)
-{
-    unsigned int offset_u = 0, offset_v = 0, offset_w = 0;
-    uint32_t mask_u = 0, mask_v = 0, mask_w = 0;
-
-    unsigned int i = 1, j = 1;
-
-    while( (i <= width) || (i <= height) || (i <= depth) ) {
-        if(i < width) {
-            mask_u |= j;
-            j<<=1;
-        }
-        if(i < height) {
-            mask_v |= j;
-            j<<=1;
-        }
-        if(i < depth) {
-            mask_w |= j;
-            j<<=1;
-        }
-        i<<=1;
-    }
-
-    uint32_t start_u = 0;
-    uint32_t start_v = 0;
-    uint32_t start_w = 0;
-    uint32_t mask_max = 0;
-
-    // get the biggest mask
-    if(mask_u > mask_v)
-        mask_max = mask_u;
-    else
-        mask_max = mask_v;
-    if(mask_w > mask_max)
-        mask_max = mask_w;
-
-    for(i = 1; i <= mask_max; i<<=1) {
-        if(i<=mask_u) {
-            if(mask_u & i) start_u |= (offset_u & i);
-            else offset_u <<= 1;
-        }
-
-        if(i <= mask_v) {
-            if(mask_v & i) start_v |= (offset_v & i);
-            else offset_v<<=1;
-        }
-
-        if(i <= mask_w) {
-            if(mask_w & i) start_w |= (offset_w & i);
-            else offset_w <<= 1;
-        }
-    }
-
-    uint32_t w = start_w;
-    unsigned int z;
-    for(z=0; z<depth; z++) {
-        uint32_t v = start_v;
-
-        unsigned int y;
-        for(y=0; y<height; y++) {
-            uint32_t u = start_u;
-
-            unsigned int x;
-            for (x=0; x<width; x++) {
-                memcpy(dst_buf,
-                       src_buf + ( (u|v|w)*bytes_per_pixel ),
-                       bytes_per_pixel);
-                dst_buf += bytes_per_pixel;
-
-                u = (u - mask_u) & mask_u;
-            }
-            dst_buf += pitch - width * bytes_per_pixel;
-
-            v = (v - mask_v) & mask_v;
-        }
-        w = (w - mask_w) & mask_w;
-    }
 }
 
 static void pgraph_bind_textures(NV2A_GPUState *d)
 {
     int i;
 
-    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, "NV2A: pgraph_bind_textures");
+    debugger_push_group("NV2A: pgraph_bind_textures");
 
     for (i=0; i<NV2A_GPU_MAX_TEXTURES; i++) {
 
@@ -1981,15 +1228,9 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
             ColorFormatInfo f = kelvin_color_format_map[texture->color_format];
             if (f.bytes_per_pixel == 0) {
 
-                char buffer[128];
-                sprintf(buffer,"NV2A: unhandled texture->color_format 0x%0x",
-                        texture->color_format);
-                glDebugMessageInsert(GL_DEBUG_SOURCE_APPLICATION,
-                                     GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR, 
-                                     0, GL_DEBUG_SEVERITY_MEDIUM, -1, 
-                                     buffer);
+                debugger_message("NV2A: unhandled texture->color_format 0x%0x",
+                                 texture->color_format);
 
-                printf("%s\n",buffer);
 #if 0
                 assert(0);
 #endif
@@ -2097,6 +1338,9 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
 
                 glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
             } else {
+#ifdef DEBUG_NV2A_GPU_DISABLE_MIPMAP
+                unsigned int levels = 1;
+#else
                 unsigned int levels = texture->levels;
                 if (texture->max_mipmap_level < levels) {
                     levels = texture->max_mipmap_level;
@@ -2106,6 +1350,7 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
                     texture->min_mipmap_level);
                 glTexParameteri(gl_target, GL_TEXTURE_MAX_LEVEL,
                     levels-1);
+#endif
 
 
                 int level;
@@ -2167,19 +1412,21 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
             glBindTexture(GL_TEXTURE_2D, 0);
             glBindTexture(GL_TEXTURE_RECTANGLE_ARB, 0);
         }
+        assert(glGetError() == 0);
 
     }
 
-    glPopDebugGroup();
+    debugger_pop_group();
 
 }
 
-static guint shader_hash(gconstpointer key)
+static guint hash(gconstpointer key, size_t size)
 {
     /* 64 bit Fowler/Noll/Vo FNV-1a hash code */
     uint64_t hval = 0xcbf29ce484222325ULL;
     const uint8_t *bp = key;
-    const uint8_t *be = key + sizeof(ShaderState);
+    const uint8_t *be = key + size;
+//FIXME: Search for end of shader
     while (bp < be) {
         hval ^= (uint64_t) *bp++;
         hval += (hval << 1) + (hval << 4) + (hval << 5) +
@@ -2189,69 +1436,92 @@ static guint shader_hash(gconstpointer key)
     return (guint)hval;
 }
 
+static guint shader_hash(gconstpointer key)
+{
+    return hash(key, sizeof(ShaderState));
+}
+
 static gboolean shader_equal(gconstpointer a, gconstpointer b)
 {
     const ShaderState *as = a, *bs = b;
     return memcmp(as, bs, sizeof(ShaderState)) == 0;
 }
 
-static GLuint generate_shaders(ShaderState state)
+//FIXME: Split this into vertex, fragment and program functions and make sure to only use information which also influences the hash!
+static GLuint generate_shaders(PGRAPHState* pg, KelvinState* kelvin, ShaderState state)
 {
     int i;
 
     GLuint program = glCreateProgram();
 
-    if (state.fixed_function) {
+    GLuint vertex_shader = glCreateShader(GL_VERTEX_SHADER);
+    glAttachShader(program, vertex_shader);
+
+    GLint compiled;
+
+    const char *vertex_shader_code;
+    QString *transform_program_code;
+
+    //XXX: This is a loosy check for fixed function
+    if (state.vertex_shader_hash == 0) {
         /* generate vertex shader mimicking fixed function */
-        GLuint vertex_shader = glCreateShader(GL_VERTEX_SHADER);
-        glAttachShader(program, vertex_shader);
 
-        const char *vertex_shader_code =
-"attribute vec4 position;\n"
-"attribute vec3 normal;\n"
-"attribute vec4 diffuse;\n"
-"attribute vec4 specular;\n"
-"attribute float fogCoord;\n"
-"attribute vec4 multiTexCoord0;\n"
-"attribute vec4 multiTexCoord1;\n"
-"attribute vec4 multiTexCoord2;\n"
-"attribute vec4 multiTexCoord3;\n"
+        vertex_shader_code =
+          "attribute vec4 position;\n"
+          "attribute vec3 normal;\n"
+          "attribute vec4 diffuse;\n"
+          "attribute vec4 specular;\n"
+          "attribute float fogCoord;\n"
+          "attribute vec4 multiTexCoord0;\n"
+          "attribute vec4 multiTexCoord1;\n"
+          "attribute vec4 multiTexCoord2;\n"
+          "attribute vec4 multiTexCoord3;\n"
 
-"uniform mat4 composite;\n"
-"uniform mat4 textureMatrix0;\n"
-"uniform mat4 textureMatrix1;\n"
-"uniform mat4 textureMatrix2;\n"
-"uniform mat4 textureMatrix3;\n"
-"uniform mat4 invViewport;\n"
-"void main() {\n"
-"   gl_Position = invViewport * (position * composite);\n"
-/* temp hack: the composite matrix includes the view transform... */
-//"   gl_Position = position * composite;\n"
-//"   gl_Position.x = (gl_Position.x - 320.0) / 320.0;\n"
-//"   gl_Position.y = -(gl_Position.y - 240.0) / 240.0;\n"
-"   gl_Position.z = gl_Position.z * 2.0 - gl_Position.w;\n"
-"   gl_FrontColor = diffuse;\n"
-"   gl_TexCoord[0] = textureMatrix0*multiTexCoord0;\n"
-"   gl_TexCoord[1] = textureMatrix1*multiTexCoord1;\n"
-"   gl_TexCoord[2] = textureMatrix2*multiTexCoord2;\n"
-"   gl_TexCoord[3] = textureMatrix3*multiTexCoord3;\n"
-"}\n";
+          "uniform mat4 composite;\n"
+          "uniform mat4 textureMatrix0;\n"
+          "uniform mat4 textureMatrix1;\n"
+          "uniform mat4 textureMatrix2;\n"
+          "uniform mat4 textureMatrix3;\n"
+          "uniform mat4 invViewport;\n"
+          "void main() {\n"
+          "   gl_Position = invViewport * (position * composite);\n"
+          /* temp hack: the composite matrix includes the view transform... */
+          //"   gl_Position = position * composite;\n"
+          //"   gl_Position.x = (gl_Position.x - 320.0) / 320.0;\n"
+          //"   gl_Position.y = -(gl_Position.y - 240.0) / 240.0;\n"
+          "   gl_Position.z = gl_Position.z * 2.0 - gl_Position.w;\n"
+          "   gl_FrontColor = diffuse;\n"
+          "   gl_TexCoord[0] = textureMatrix0 * multiTexCoord0;\n"
+          "   gl_TexCoord[1] = textureMatrix1 * multiTexCoord1;\n"
+          "   gl_TexCoord[2] = textureMatrix2 * multiTexCoord2;\n"
+          "   gl_TexCoord[3] = textureMatrix3 * multiTexCoord3;\n"
+          "}\n";
+    } else {
+        VertexShader *shader = &kelvin->vertexshader;
+        transform_program_code = vsh_translate(VSH_VERSION_XVS,
+                                                        &shader->program_data[kelvin->vertexshader_start_slot*4],
+                                                        (NV2A_GPU_MAX_VERTEXSHADER_LENGTH-kelvin->vertexshader_start_slot)*4);
+        vertex_shader_code = qstring_get_str(transform_program_code);
+    }
 
-        glShaderSource(vertex_shader, 1, &vertex_shader_code, 0);
-        glCompileShader(vertex_shader);
+    glShaderSource(vertex_shader, 1, &vertex_shader_code, 0);
+    glCompileShader(vertex_shader);
 
-        NV2A_GPU_DPRINTF("bind new vertex shader, code:\n%s\n", vertex_shader_code);
+    NV2A_GPU_DPRINTF("bind new vertex shader, code:\n%s\n", vertex_shader_code);
 
-        /* Check it compiled */
-        GLint compiled = 0;
-        glGetShaderiv(vertex_shader, GL_COMPILE_STATUS, &compiled);
-        if (!compiled) {
-            GLchar log[1024];
-            glGetShaderInfoLog(vertex_shader, 1024, NULL, log);
-            fprintf(stderr, "nv2a: vertex shader compilation failed: %s\n", log);
-            abort();
-        }
+    /* Check it compiled */
+    glGetShaderiv(vertex_shader, GL_COMPILE_STATUS, &compiled);
+    if (!compiled) {
+        GLchar log[1024];
+        glGetShaderInfoLog(vertex_shader, 1024, NULL, log);
+        fprintf(stderr, "\n\n%s\n", vertex_shader_code);
+        fprintf(stderr, "nv2a: vertex shader compilation failed: %s\n", log);
+        abort();
+    }
 
+    //XXX: Again: This is a check for fixed function..
+    if (state.vertex_shader_hash == 0) {
+        /* Bind attributes for fixed function pipeline */
         glBindAttribLocation(program, NV2A_GPU_VERTEX_ATTR_POSITION, "position");
         glBindAttribLocation(program, NV2A_GPU_VERTEX_ATTR_DIFFUSE, "diffuse");
         glBindAttribLocation(program, NV2A_GPU_VERTEX_ATTR_SPECULAR, "specular");
@@ -2260,6 +1530,20 @@ static GLuint generate_shaders(ShaderState state)
         glBindAttribLocation(program, NV2A_GPU_VERTEX_ATTR_TEXTURE1, "multiTexCoord1");
         glBindAttribLocation(program, NV2A_GPU_VERTEX_ATTR_TEXTURE2, "multiTexCoord2");
         glBindAttribLocation(program, NV2A_GPU_VERTEX_ATTR_TEXTURE3, "multiTexCoord3");
+    } else {
+        /* Release shader string */
+        QDECREF(transform_program_code);
+        /* Bind attributes for transform program*/
+        char tmp[4];
+        for(i = 0; i < 16; i++) {
+            sprintf(tmp,"v%d",i);
+            glBindAttribLocation(program, i, tmp);
+        }
+
+#ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
+        debugger_prepare_feedback();
+#endif
+
     }
 
 
@@ -2285,7 +1569,6 @@ static GLuint generate_shaders(ShaderState state)
     glCompileShader(fragment_shader);
 
     /* Check it compiled */
-    GLint compiled = 0;
     glGetShaderiv(fragment_shader, GL_COMPILE_STATUS, &compiled);
     if (!compiled) {
         GLchar log[1024];
@@ -2293,6 +1576,7 @@ static GLuint generate_shaders(ShaderState state)
         fprintf(stderr, "nv2a: fragment shader compilation failed: %s\n", log);
         abort();
     }
+    assert(glGetError() == GL_NO_ERROR);
 
     QDECREF(fragment_shader_code);
 
@@ -2310,6 +1594,7 @@ static GLuint generate_shaders(ShaderState state)
     }
 
     glUseProgram(program);
+    assert(glGetError() == 0);
 
     /* set texture samplers */
     for (i = 0; i < NV2A_GPU_MAX_TEXTURES; i++) {
@@ -2330,18 +1615,36 @@ static GLuint generate_shaders(ShaderState state)
         fprintf(stderr, "nv2a: shader validation failed: %s\n", log);
         abort();
     }
+    assert(glGetError() == GL_NO_ERROR);
 
     return program;
 }
 
-static void pgraph_bind_shaders(PGRAPHState *pg)
+static void pgraph_bind_shaders(PGRAPHState *pg, KelvinState* kelvin)
 {
+    debugger_push_group("NV2A: pgraph_bind_shaders");
     int i;
 
     bool fixed_function = GET_MASK(pg->regs[NV_PGRAPH_CSV0_D],
                                    NV_PGRAPH_CSV0_D_MODE) == 0;
 
     if (pg->shaders_dirty) {
+
+        /* Hash the vertex shader if it exists */
+        guint vertex_shader_hash;
+        if (fixed_function) {
+            vertex_shader_hash = 0;
+        } else {
+            //FIXME: This will currently ignore the dirty bit..
+            uint32_t* transform_program = kelvin->vertexshader.program_data;
+            unsigned int start = kelvin->vertexshader_start_slot; //FIXME: Make sure this is a slot number, not a byte or dword offset
+            /* Search for the final instruction */
+            for(i = 0; i < NV2A_GPU_MAX_VERTEXSHADER_LENGTH; i++) {
+                if (transform_program[i * 4 + 3] & 1) { break; }
+            }
+            vertex_shader_hash = hash(&transform_program[start * 4], (NV2A_GPU_MAX_VERTEXSHADER_LENGTH - i) * 4);
+        }
+
         ShaderState state = {
             /* register combier stuff */
             .combiner_control = pg->regs[NV_PGRAPH_COMBINECTL],
@@ -2350,8 +1653,8 @@ static void pgraph_bind_shaders(PGRAPHState *pg)
             .final_inputs_0 = pg->regs[NV_PGRAPH_COMBINESPECFOG0],
             .final_inputs_1 = pg->regs[NV_PGRAPH_COMBINESPECFOG1],
 
-            /* fixed function stuff */
-            .fixed_function = fixed_function,
+            /* vertex shader stuff */
+            .vertex_shader_hash = vertex_shader_hash
         };
 
 
@@ -2373,24 +1676,36 @@ static void pgraph_bind_shaders(PGRAPHState *pg)
             }
         }
 
+        /* if the shader changed / is dirty, dirty all the constants so they will be uploaded again */
+        for (i=0; i<NV2A_GPU_VERTEXSHADER_CONSTANTS; i++) {
+            kelvin->constants[i].dirty = true;
+        }
+
+#if 1
+        //FIXME: Add vertex shader to cache! - we should probably cache the 3 of them individually (vertex, fragment, program)
         gpointer cached_shader = g_hash_table_lookup(pg->shader_cache, &state);
         if (cached_shader) {
             pg->gl_program = (GLuint)cached_shader;
         } else {
-            pg->gl_program = generate_shaders(state);
+            pg->gl_program = generate_shaders(pg, kelvin, state);
 
             /* cache it */
+            
             ShaderState *cache_state = g_malloc(sizeof(*cache_state));
             memcpy(cache_state, &state, sizeof(*cache_state));
             g_hash_table_insert(pg->shader_cache, cache_state,
                                 (gpointer)pg->gl_program);
         }
+#else
+        pg->gl_program = generate_shaders(pg, kelvin, state);
+#endif
     }
 
     glUseProgram(pg->gl_program);
+    assert(glGetError() == 0);
 
 
-    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, "NV2A: update combiner constants");
+    debugger_push_group("NV2A: update combiner constants");
 
     /* update combiner constants */
     for (i = 0; i<= 8; i++) {
@@ -2421,7 +1736,7 @@ static void pgraph_bind_shaders(PGRAPHState *pg)
         }
     }
 
-    glPopDebugGroup();
+    debugger_pop_group();
 
     /* update fixed function uniforms */
     if (fixed_function) {
@@ -2448,9 +1763,21 @@ static void pgraph_bind_shaders(PGRAPHState *pg)
         float zclip_max = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMAX];
         float zclip_min = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMIN];
 
-        /* estimate the viewport by assuming it matches the surface ... */
-        float m11 = 0.5 * pg->surface_width;
-        float m22 = -0.5 * pg->surface_height;
+        /* estimate the viewport by assuming it matches the clip region ... */
+#if 0
+        float m11 = *(float*)&kelvin->constants[59].data[0];
+        float m22 = *(float*)&kelvin->constants[59].data[1];
+
+        float invViewport[16] = {
+            2.0/w, 0.0,   0.0,        0.0,
+            0.0,   2.0/h, 0.0,        0.0,
+            0.0,   0.0,  -2.0/zrange, 0.0,
+            0.0,   0.0,  -m43/m33,    1.0
+        };
+
+#else
+        float m11 = 0.5 * pg->clip_width;
+        float m22 = -0.5 * pg->clip_height;
         float m33 = zclip_max - zclip_min;
         //float m41 = m11;
         //float m42 = -m22;
@@ -2467,13 +1794,39 @@ static void pgraph_bind_shaders(PGRAPHState *pg)
             0, 0, 1.0/m33, 0,
             -1.0, 1.0, -m43/m33, 1.0
         };
-
+#endif
         GLint viewLoc = glGetUniformLocation(pg->gl_program, "invViewport");
         glUniformMatrix4fv(viewLoc, 1, GL_FALSE, &invViewport[0]);
+
+    } else {
+
+        //FIXME: Uniforms are *PER SHADER PROGRAM!* - Our cache / dirty system has to represent that..
+
+        /* load constants */
+        for (i=0; i<NV2A_GPU_VERTEXSHADER_CONSTANTS; i++) {
+            VertexShaderConstant *constant = &kelvin->constants[i];
+            //if (!constant->dirty) continue;
+
+            char tmp[7];
+            sprintf(tmp,"c[%d]",i);
+            GLint loc = glGetUniformLocation(pg->gl_program, tmp);
+            if (loc != -1) {
+                glUniform4fv(loc, 1, (const GLfloat*)constant->data);
+                //constant->dirty = false;
+            }
+        }
+
+        float zclip_max = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMAX];
+        float zclip_min = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMIN];
+        GLint loc = glGetUniformLocation(pg->gl_program, "cliprange");
+        glUniform2f(loc, zclip_min, zclip_max);
+//        glDepthRangef();
 
     }
 
     pg->shaders_dirty = false;
+
+    debugger_pop_group();
 }
 
 static uint8_t* map_surface(NV2A_GPUState *d, Surface* s, DMAObject* dma, hwaddr* len)
@@ -2487,34 +1840,70 @@ static uint8_t* map_surface(NV2A_GPUState *d, Surface* s, DMAObject* dma, hwaddr
     assert(dma->address + s->offset != 0);
     assert(s->offset <= dma->limit);
     assert(s->offset
-            + s->pitch * d->pgraph.surface_height
+            + s->pitch * d->pgraph.clip_height
                 <= dma->limit + 1);
 
     return nv_dma_map(d, dma, len);
 
 }
 
+//FIXME: All of those don't respect an offset
 static void mark_cpu_surface_dirty(NV2A_GPUState *d, Surface* s, DMAObject* dma) {
     memory_region_set_dirty(d->vram, dma->address + s->offset,
-                                     s->pitch * d->pgraph.surface_height);
+                                     s->pitch * d->pgraph.clip_height);
 }
 
 static void mark_cpu_surface_clean(NV2A_GPUState *d, Surface* s, DMAObject* dma, unsigned client) {
     memory_region_reset_dirty(d->vram, dma->address + s->offset,
-                                       s->pitch * d->pgraph.surface_height,
+                                       s->pitch * d->pgraph.clip_height,
                                        client);
 }
 
 static bool is_cpu_surface_dirty(NV2A_GPUState *d, Surface* s, DMAObject* dma, unsigned client) {
     return memory_region_get_dirty(d->vram, dma->address + s->offset,
-                                            s->pitch * d->pgraph.surface_height,
+                                            s->pitch * d->pgraph.clip_height,
                                             client);
 }
 
 static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma, bool upload, uint8_t* data, GLenum gl_format, GLenum gl_type, unsigned int bytes_per_pixel) {
 
+    /* Make sure we are working with a clean context */
+    assert(glGetError() == GL_NO_ERROR);
+
     /* TODO */
-    assert(d->pgraph.surface_x == 0 && d->pgraph.surface_y == 0);
+    assert(d->pgraph.clip_x == 0 && d->pgraph.clip_y == 0);
+
+    bool swizzle = (d->pgraph.surface_type == NV097_SET_SURFACE_FORMAT_TYPE_SWIZZLE);
+
+    int w;
+    int h;
+    unsigned int rowl;
+
+    if (swizzle) {
+      w = 1 << d->pgraph.surface_swizzle_width_shift; //FIXME: Can we just use the actual surface dimensions here?!
+      h = 1 << d->pgraph.surface_swizzle_height_shift;
+#if 1 //FIXME: Does this also use pitch?
+      rowl = s->pitch / bytes_per_pixel;
+#else
+      rowl = w;
+#endif
+    } else {
+      w = d->pgraph.clip_width; 
+      h = d->pgraph.clip_height; 
+      rowl = s->pitch / bytes_per_pixel;
+    }
+
+    assert(w >= (s->pitch/bytes_per_pixel));
+    assert(d->pgraph.clip_width <= w);
+    assert(d->pgraph.clip_height <= h);
+
+    void* gpu_buffer = data + s->offset;
+    void* tmp_buffer;
+    if (swizzle) {
+        tmp_buffer = malloc(rowl*h*bytes_per_pixel);
+    } else {
+        tmp_buffer = NULL;
+    }
 
     if (upload) {
         /* surface modified (or moved) by the cpu.
@@ -2527,18 +1916,30 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
         int rl, pa;
         glGetIntegerv(GL_UNPACK_ROW_LENGTH, &rl);
         glGetIntegerv(GL_UNPACK_ALIGNMENT, &pa);
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, s->pitch / bytes_per_pixel);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, rowl);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
         /* glDrawPixels is crazy deprecated, but there really isn't
          * an easy alternative */
 
-        glWindowPos2i(0, d->pgraph.surface_height);
+        // If the surface is swizzled we have to unswizzle the CPU data before uploading them
+        if (swizzle) {
+            unswizzle_rect(gpu_buffer,
+                           w,
+                           h,
+                           1,
+                           tmp_buffer,
+                           rowl*bytes_per_pixel,
+                           bytes_per_pixel);
+        }
+
+        glWindowPos2i(0, d->pgraph.clip_height);
         glPixelZoom(1, -1);
-        glDrawPixels(d->pgraph.surface_width,
-                     d->pgraph.surface_height,
+        glDrawPixels(d->pgraph.clip_width,
+                     d->pgraph.clip_height,
                      gl_format, gl_type,
-                     data + s->offset);
+                     swizzle ? tmp_buffer : gpu_buffer);
+
         assert(glGetError() == GL_NO_ERROR);
 
         glPixelStorei(GL_UNPACK_ROW_LENGTH, rl);
@@ -2548,12 +1949,33 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
 
         /* read the opengl renderbuffer into the surface */
 
+        // Make sure we don't overwrite random CPU data between rows
+        if (swizzle) {
+            memcpy(tmp_buffer,gpu_buffer,rowl*h*bytes_per_pixel);
+        }
+
         glo_readpixels(gl_format, gl_type,
-                       bytes_per_pixel, s->pitch,
-                       d->pgraph.surface_width, d->pgraph.surface_height,
-                       data + s->offset);
+                       bytes_per_pixel, rowl*bytes_per_pixel,
+                       w, h,
+                       swizzle ? tmp_buffer : gpu_buffer);
         assert(glGetError() == GL_NO_ERROR);
 
+        /* When reading we have to swizzle the data for the CPU */
+        if (swizzle) {
+
+            swizzle_rect(tmp_buffer,
+                         rowl*bytes_per_pixel,
+                         gpu_buffer,
+                         w,
+                         h,
+                         1,
+                         bytes_per_pixel);
+        }
+
+    }
+
+    if (swizzle) {
+        free(tmp_buffer);
     }
 
     uint8_t *out = data + s->offset;
@@ -2562,9 +1984,9 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
         upload?"upload (CPU->GPU)":"download (GPU->CPU)",
         dma->address, dma->address + dma->limit,
         dma->address + s->offset,
-        dma->address + s->pitch * d->pgraph.surface_height,
-        d->pgraph.surface_x, d->pgraph.surface_y,
-        d->pgraph.surface_width, d->pgraph.surface_height,
+        dma->address + s->pitch * d->pgraph.clip_height,
+        d->pgraph.clip_x, d->pgraph.clip_y,
+        d->pgraph.clip_width, d->pgraph.clip_height,
         s->pitch,
         out[0], out[1], out[2], out[3]);
 
@@ -2756,7 +2178,7 @@ static void pgraph_init(PGRAPHState *pg)
     pg->gl_context = glo_context_create(GLO_FF_DEFAULT);
     assert(pg->gl_context);
 
-    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, "NV2A: pgraph_init");
+    debugger_push_group("NV2A: pgraph_init");
 
     /* Check context capabilities */
     const GLubyte *extensions = glGetString(GL_EXTENSIONS);
@@ -2770,15 +2192,11 @@ static void pgraph_init(PGRAPHState *pg)
                              extensions));
 
     assert(glo_check_extension((const GLubyte *)
-                             "GL_ARB_vertex_program",
-                             extensions));
-
-    assert(glo_check_extension((const GLubyte *)
-                             "GL_ARB_fragment_program",
-                             extensions));
-
-    assert(glo_check_extension((const GLubyte *)
                              "GL_ARB_texture_rectangle",
+                             extensions));
+
+    assert(glo_check_extension((const GLubyte *)
+                             "GL_ARB_vertex_array_bgra",
                              extensions));
 
     GLint max_vertex_attributes;
@@ -2791,7 +2209,7 @@ static void pgraph_init(PGRAPHState *pg)
     glGenRenderbuffersEXT(1, &pg->gl_renderbuffer);
     glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, pg->gl_renderbuffer);
     glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, GL_RGBA8,
-                             640, 480);
+                             FB_W, FB_H);
     glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,
                                  GL_COLOR_ATTACHMENT0_EXT,
                                  GL_RENDERBUFFER_EXT,
@@ -2800,7 +2218,7 @@ static void pgraph_init(PGRAPHState *pg)
     glGenRenderbuffersEXT(1, &pg->gl_depth_renderbuffer);
     glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, pg->gl_depth_renderbuffer);
     glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, GL_DEPTH_COMPONENT24,
-                             640, 480);
+                             FB_W, FB_H);
     glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,
                                  GL_DEPTH_ATTACHMENT_EXT,
                                  GL_RENDERBUFFER_EXT,
@@ -2810,26 +2228,25 @@ static void pgraph_init(PGRAPHState *pg)
     assert(glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT)
             == GL_FRAMEBUFFER_COMPLETE_EXT);
 
-    glViewport(0, 0, 640, 480);
     //glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
 
     pg->shaders_dirty = true;
 
     /* generate textures */
-    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, "NV2A: generate textures");
+    debugger_push_group("NV2A: generate textures");
     for (i = 0; i < NV2A_GPU_MAX_TEXTURES; i++) {
         Texture *texture = &pg->textures[i];
         glGenTextures(1, &texture->gl_texture);
         glGenTextures(1, &texture->gl_texture_rect);
     }
-    glPopDebugGroup();
+    debugger_pop_group();
 
     pg->shader_cache = g_hash_table_new(shader_hash, shader_equal);
 
     assert(glGetError() == GL_NO_ERROR);
 
 
-    glPopDebugGroup();
+    debugger_pop_group();
 
     glo_set_current(NULL);
 }
@@ -2845,7 +2262,7 @@ static void pgraph_destroy(PGRAPHState *pg)
 
     glo_set_current(pg->gl_context);
 
-    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, "NV2A: pgraph_destroy");
+    debugger_push_group("NV2A: pgraph_destroy");
 
     glDeleteRenderbuffersEXT(1, &pg->gl_renderbuffer);
     glDeleteRenderbuffersEXT(1, &pg->gl_depth_renderbuffer);
@@ -2857,7 +2274,7 @@ static void pgraph_destroy(PGRAPHState *pg)
         glDeleteTextures(1, &texture->gl_texture_rect);
     }
 
-    glPopDebugGroup();
+    debugger_pop_group();
 
     glo_set_current(NULL);
 
@@ -3010,7 +2427,7 @@ static void pgraph_method(NV2A_GPUState *d,
          * but nothing obvious sticks out. Weird.
          */
         if (parameter != 0) {
-            assert(!(pg->pending_interrupts & NV_PGRAPH_INTR_NOTIFY));
+//FIXME: Disabled for testing            assert(!(pg->pending_interrupts & NV_PGRAPH_INTR_NOTIFY));
 
             pg->trapped_channel_id = pg->channel_id;
             pg->trapped_subchannel = subchannel;
@@ -3045,18 +2462,7 @@ static void pgraph_method(NV2A_GPUState *d,
         //       - Result at vblank?
         //       - When D3D completes a frame?
         //       - ...
-        static bool initialized = false;
-        static void(*imported_glFrameTerminatorGREMEDY)(void) = NULL;
-        if (!initialized) {
-            const GLubyte *extensions = glGetString(GL_EXTENSIONS);
-            if (glo_check_extension((const GLubyte *)"GL_GREMEDY_frame_terminator",extensions)) {
-                imported_glFrameTerminatorGREMEDY = glo_get_extension_proc((const GLubyte *)"glFrameTerminatorGREMEDY");
-            }
-            initialized = true;
-        }
-        if (imported_glFrameTerminatorGREMEDY) {
-            imported_glFrameTerminatorGREMEDY();
-        }
+        debugger_finish_frame();
 
         qemu_mutex_unlock(&pg->lock);
         qemu_sem_wait(&pg->read_3d);
@@ -3100,17 +2506,17 @@ static void pgraph_method(NV2A_GPUState *d,
     case NV097_SET_SURFACE_CLIP_HORIZONTAL:
         pgraph_update_surfaces(d, false, true, true);
 
-        pg->surface_x =
+        pg->clip_x =
             GET_MASK(parameter, NV097_SET_SURFACE_CLIP_HORIZONTAL_X);
-        pg->surface_width =
+        pg->clip_width =
             GET_MASK(parameter, NV097_SET_SURFACE_CLIP_HORIZONTAL_WIDTH);
         break;
     case NV097_SET_SURFACE_CLIP_VERTICAL:
         pgraph_update_surfaces(d, false, true, true);
 
-        pg->surface_y =
+        pg->clip_y =
             GET_MASK(parameter, NV097_SET_SURFACE_CLIP_VERTICAL_Y);
-        pg->surface_height =
+        pg->clip_height =
             GET_MASK(parameter, NV097_SET_SURFACE_CLIP_VERTICAL_HEIGHT);
         break;
     case NV097_SET_SURFACE_FORMAT:
@@ -3120,6 +2526,23 @@ static void pgraph_method(NV2A_GPUState *d,
             GET_MASK(parameter, NV097_SET_SURFACE_FORMAT_COLOR);
         pg->surface_zeta.format =
             GET_MASK(parameter, NV097_SET_SURFACE_FORMAT_ZETA);
+        pg->surface_type = 
+            GET_MASK(parameter, NV097_SET_SURFACE_FORMAT_TYPE);
+        pg->surface_anti_aliasing = 
+            GET_MASK(parameter, NV097_SET_SURFACE_FORMAT_ANTI_ALIASING);
+        pg->surface_swizzle_width_shift = 
+            GET_MASK(parameter, NV097_SET_SURFACE_FORMAT_WIDTH);
+        pg->surface_swizzle_height_shift = 
+            GET_MASK(parameter, NV097_SET_SURFACE_FORMAT_HEIGHT);
+
+        debugger_message("NV2A: Changed to %i x %i (Anti-Alias: %i; Type %i)\n",
+                         1 <<  pg->surface_swizzle_width_shift,
+                         1 <<  pg->surface_swizzle_height_shift,
+                         pg->surface_anti_aliasing,
+                         pg->surface_type);
+
+        assert(FB_W >> pg->surface_swizzle_width_shift); // 4096 width max
+        assert(FB_H >> pg->surface_swizzle_height_shift); // 4096 height max
         break;
     case NV097_SET_SURFACE_PITCH:
         pgraph_update_surfaces(d, false, true, true);
@@ -3131,12 +2554,12 @@ static void pgraph_method(NV2A_GPUState *d,
         break;
     case NV097_SET_SURFACE_COLOR_OFFSET:
         pgraph_update_surfaces(d, false, false, true);
-
+        debugger_message("NV2A: Changed COLOR_OFFSET to 0x%x\n",parameter);
         pg->surface_color.offset = parameter;
         break;
     case NV097_SET_SURFACE_ZETA_OFFSET:
         pgraph_update_surfaces(d, false, true, false);
-
+        debugger_message("NV2A: Changed ZETA_OFFSET to 0x%x\n",parameter);
         pg->surface_zeta.offset = parameter;
         break;
 
@@ -3215,7 +2638,7 @@ static void pgraph_method(NV2A_GPUState *d,
 
         slot = (class_method - NV097_SET_VIEWPORT_OFFSET) / 4;
 
-        /* populate magic viewport offset constant */
+        //FIXME: Why is this happening?! Is it documented anywhere?
         kelvin->constants[59].data[slot] = parameter;
         kelvin->constants[59].dirty = true;
         break;
@@ -3253,7 +2676,7 @@ static void pgraph_method(NV2A_GPUState *d,
 
         slot = (class_method - NV097_SET_VIEWPORT_SCALE) / 4;
 
-        /* populate magic viewport scale constant */
+        //FIXME: Why is this happening? Same as NV097_SET_VIEWPORT_OFFSET!
         kelvin->constants[58].data[slot] = parameter;
         kelvin->constants[58].dirty = true;
         break;
@@ -3262,12 +2685,12 @@ static void pgraph_method(NV2A_GPUState *d,
             NV097_SET_TRANSFORM_PROGRAM + 0x7c:
 
         slot = (class_method - NV097_SET_TRANSFORM_PROGRAM) / 4;
-        /* TODO: It should still work using a non-increasing slot??? */
 
-        vertexshader = &kelvin->vertexshaders[kelvin->vertexshader_load_slot];
-        assert(vertexshader->program_length < NV2A_GPU_MAX_VERTEXSHADER_LENGTH);
-        vertexshader->program_data[
-            vertexshader->program_length++] = parameter;
+        assert(kelvin->vertexshader_load_slot < (NV2A_GPU_MAX_VERTEXSHADER_LENGTH*4));
+        vertexshader = &kelvin->vertexshader;
+        //printf("Load prog slot %i (+%i?), 0x%08X\n",kelvin->vertexshader_load_slot,slot,parameter);
+        vertexshader->program_data[kelvin->vertexshader_load_slot++] = parameter;
+        vertexshader->dirty = true;
         break;
 
     case NV097_SET_TRANSFORM_CONSTANT ...
@@ -3275,8 +2698,11 @@ static void pgraph_method(NV2A_GPUState *d,
 
         slot = (class_method - NV097_SET_TRANSFORM_CONSTANT) / 4;
 
-        constant = &kelvin->constants[kelvin->constant_load_slot+slot/4];
-        constant->data[slot%4] = parameter;
+        //printf("Setting c[%i].%i (c%i) = %f\n",kelvin->constant_load_slot/4,kelvin->constant_load_slot%4,kelvin->constant_load_slot/4-96,*(float*)&parameter);
+        assert((kelvin->constant_load_slot/4) < NV2A_GPU_VERTEXSHADER_CONSTANTS);
+        constant = &kelvin->constants[kelvin->constant_load_slot/4];
+        constant->data[kelvin->constant_load_slot%4] = parameter;
+        kelvin->constant_load_slot++;
         constant->dirty = true;
         break;
 
@@ -3315,38 +2741,50 @@ static void pgraph_method(NV2A_GPUState *d,
 
         switch (vertex_attribute->format) {
         case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_D3D:
+            vertex_attribute->gl_type = GL_UNSIGNED_BYTE;
+            vertex_attribute->gl_normalize = GL_TRUE;
+            vertex_attribute->size = 1;
+            assert(vertex_attribute->count == 4);
+            vertex_attribute->count = GL_BGRA; // http://www.opengl.org/registry/specs/ARB/vertex_array_bgra.txt
+            vertex_attribute->needs_conversion = false; //FIXME: Remove once the new system works
+            vertex_attribute->converter = NULL;
         case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_OGL:
             vertex_attribute->gl_type = GL_UNSIGNED_BYTE;
             vertex_attribute->gl_normalize = GL_TRUE;
             vertex_attribute->size = 1;
-            vertex_attribute->needs_conversion = false;
+            vertex_attribute->needs_conversion = false; //FIXME: Remove once the new system works
+            vertex_attribute->converter = NULL;
             break;
         case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_S1:
             vertex_attribute->gl_type = GL_SHORT;
             vertex_attribute->gl_normalize = GL_FALSE;
             vertex_attribute->size = 2;
-            vertex_attribute->needs_conversion = false;
+            vertex_attribute->needs_conversion = false; //FIXME: Remove once the new system works
+            vertex_attribute->converter = NULL;
             break;
         case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F:
             vertex_attribute->gl_type = GL_FLOAT;
             vertex_attribute->gl_normalize = GL_FALSE;
             vertex_attribute->size = 4;
-            vertex_attribute->needs_conversion = false;
+            vertex_attribute->needs_conversion = false; //FIXME: Remove once the new system works
+            vertex_attribute->converter = NULL;
             break;
         case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_S32K:
             vertex_attribute->gl_type = GL_UNSIGNED_SHORT;
             vertex_attribute->gl_normalize = GL_FALSE;
             vertex_attribute->size = 2;
-            vertex_attribute->needs_conversion = false;
+            vertex_attribute->needs_conversion = false; //FIXME: Remove once the new system works
+            vertex_attribute->converter = NULL;
             break;
         case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_CMP:
             /* "3 signed, normalized components packed in 32-bits. (11,11,10)" */
             vertex_attribute->size = 4;
             vertex_attribute->gl_type = GL_FLOAT;
             vertex_attribute->gl_normalize = GL_FALSE;
-            vertex_attribute->needs_conversion = true;
+            vertex_attribute->needs_conversion = true; //FIXME: Remove once the new system works
             vertex_attribute->converted_size = 4;
             vertex_attribute->converted_count = 3 * vertex_attribute->count;
+            vertex_attribute->converter = convert_cmp_to_f;
             break;
         default:
             assert(false);
@@ -3392,31 +2830,40 @@ static void pgraph_method(NV2A_GPUState *d,
             {
                 char buffer[128];
                 sprintf(buffer,"NV2A: BEGIN_END 0x%X", parameter);
-                glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, buffer);
+                debugger_push_group(buffer);
             }
 
             pgraph_update_surfaces(d, true, writeZeta, writeColor);
 
             /* FIXME: Skip most stuff if writeZeta and writeColor are both false */
+            /* FIXME: Use simplified shader for "zeta only" (color masked) writes? */
 
-            bool use_vertex_program = GET_MASK(pg->regs[NV_PGRAPH_CSV0_D],
-                                               NV_PGRAPH_CSV0_D_MODE) == 2;
-            if (use_vertex_program) {
-                glEnable(GL_VERTEX_PROGRAM_ARB);
-                kelvin_bind_vertex_program(kelvin);
-            } else {
-                glDisable(GL_VERTEX_PROGRAM_ARB);
-            }
+//FIXME: Use offset?
+assert(pg->clip_x == 0);
+assert(pg->clip_y == 0);
+int w = pg->clip_width;
+int h =  pg->clip_height;
+#if 0 //FIXME: !!!! Hack because some viewport stuff is wrong and I want to see what I render until the issue is solved..
+if (w > 640) { w = 640; }
+if (w > 480) { w = 480; }
+#endif
+//FIXME: Probably do this elsewhere..?
+glViewport(0, 0, w, h);
 
-            /* FIXME: Use simplified shader for zeta only? */
-
-            pgraph_bind_shaders(pg);
+            pgraph_bind_shaders(pg, kelvin);
 
             pgraph_bind_textures(d);
             kelvin_bind_vertex_attributes(d, kelvin);
 
 
             kelvin->gl_primitive_mode = kelvin_primitive_map[parameter];
+
+#ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
+            if (GET_MASK(pg->regs[NV_PGRAPH_CSV0_D],
+                                  NV_PGRAPH_CSV0_D_MODE) != 0) {
+                debugger_begin_feedback();
+            }
+#endif
 
             kelvin->inline_elements_length = 0;
             kelvin->inline_array_length = 0;
@@ -3443,6 +2890,9 @@ static void pgraph_method(NV2A_GPUState *d,
                         sizeof(InlineVertexBufferEntry),
                         &kelvin->inline_buffer[0].diffuse);
 
+
+                assert(0); //FIXME: This code path needs a major rewrite..
+
                 glDrawArrays(kelvin->gl_primitive_mode,
                              0, kelvin->inline_buffer_length);
             } else if (kelvin->inline_array_length) {
@@ -3468,6 +2918,16 @@ static void pgraph_method(NV2A_GPUState *d,
                     min_element = MIN(kelvin->inline_elements[i], min_element);
                 }
 
+#ifdef DEBUG_NV2A_GPU_EXPORT
+                GLint prog;
+                glGetIntegerv(GL_CURRENT_PROGRAM,&prog);
+                char tmp[32];
+                sprintf(tmp,"./buffer-%i.obj",prog);
+                debugger_export_mesh(tmp,0,3,6,max_element+1,kelvin->inline_elements_length,kelvin->inline_elements,kelvin->gl_primitive_mode);
+                sprintf(tmp,"./buffer-%i.vsh",prog);
+                debugger_export_vertex_shader(tmp, kelvin, true);
+#endif
+
                 kelvin_bind_converted_vertex_attributes(d, kelvin,
                     false, max_element+1);
                 glDrawElements(kelvin->gl_primitive_mode,
@@ -3478,6 +2938,16 @@ static void pgraph_method(NV2A_GPUState *d,
                 assert(false);
             }*/
 
+
+#ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
+            if (GET_MASK(pg->regs[NV_PGRAPH_CSV0_D],
+                         NV_PGRAPH_CSV0_D_MODE) != 0) {
+                if (debugger_end_feedback()) {
+                    debugger_dump_feedback(10,10);
+                }
+            }
+#endif
+
             if (writeZeta) {
                 pg->surface_zeta.draw_dirty = true;
             }
@@ -3486,7 +2956,7 @@ static void pgraph_method(NV2A_GPUState *d,
             }
 
             assert(glGetError() == GL_NO_ERROR);
-            glPopDebugGroup();
+            debugger_pop_group();
 
         }
         break;
@@ -3577,7 +3047,11 @@ static void pgraph_method(NV2A_GPUState *d,
         
         pg->textures[slot].dirty = true;
         break;
-
+    case NV097_SET_POINT_SIZE: {
+        float point_size = *(float*)&parameter; //FIXME: also exists in reg
+        glPointSize(point_size); //FIXME: Defer..
+        break;
+    }
     case NV097_ARRAY_ELEMENT16:
         assert(kelvin->inline_elements_length < NV2A_GPU_MAX_BATCH_LENGTH);
         kelvin->inline_elements[
@@ -3655,7 +3129,7 @@ static void pgraph_method(NV2A_GPUState *d,
             break;
         }
 
-        glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, "NV2A: CLEAR_SURFACE");
+        debugger_push_group("NV2A: CLEAR_SURFACE");
 
         GLbitfield gl_mask = 0;
 
@@ -3726,7 +3200,8 @@ static void pgraph_method(NV2A_GPUState *d,
                 NV_PGRAPH_CLEARRECTY_YMIN);
         unsigned int ymax = GET_MASK(d->pgraph.regs[NV_PGRAPH_CLEARRECTY],
                 NV_PGRAPH_CLEARRECTY_YMAX);
-        glScissor(xmin, pg->surface_height-ymax, xmax-xmin, ymax-ymin);
+        glScissor(xmin, ymin, xmax-xmin, ymax-ymin);
+        //FIXME: Is this being clipped? If not we need a special case of update_surface
 
         NV2A_GPU_DPRINTF("------------------CLEAR 0x%x %d,%d - %d,%d  %x---------------\n",
             parameter, xmin, ymin, xmax, ymax, d->pgraph.regs[NV_PGRAPH_COLORCLEARVALUE]);
@@ -3741,7 +3216,7 @@ static void pgraph_method(NV2A_GPUState *d,
 
         glDisable(GL_SCISSOR_TEST);
 
-        glPopDebugGroup();
+        debugger_pop_group();
 
         break;
 
@@ -3791,24 +3266,24 @@ static void pgraph_method(NV2A_GPUState *d,
         kelvin->enable_vertex_program_write = parameter;
         break;
     case NV097_SET_TRANSFORM_PROGRAM_LOAD:
-        assert(parameter < NV2A_GPU_VERTEXSHADER_SLOTS);
+        assert(parameter < NV2A_GPU_MAX_VERTEXSHADER_LENGTH); //FIXME: Is this any useful? This just sets a register, it might be filled with crap unless it's actually used
+        //printf("Seeking to prog slot %i\n",parameter);
+        assert(parameter == 0); /* FIXME: Something is fishy.. this *always* seeks to 0!? */
         kelvin->vertexshader_load_slot = parameter;
-        kelvin->vertexshaders[parameter].program_length = 0; /* ??? */
-        kelvin->vertexshaders[parameter].dirty = true;
         break;
     case NV097_SET_TRANSFORM_PROGRAM_START:
-        assert(parameter < NV2A_GPU_VERTEXSHADER_SLOTS);
-        /* if the shader changed, dirty all the constants */
-        if (parameter != kelvin->vertexshader_start_slot) {
-            for (i=0; i<NV2A_GPU_VERTEXSHADER_CONSTANTS; i++) {
-                kelvin->constants[i].dirty = true;
-            }
-        }
+        assert(parameter < NV2A_GPU_MAX_VERTEXSHADER_LENGTH);
+        //printf("Setting start to slot %i\n",parameter);
+        assert(parameter == 0); /* FIXME: Something is fishy.. this *always* seeks to 0!? */
         kelvin->vertexshader_start_slot = parameter;
+        kelvin->vertexshader.dirty = true;
         break;
     case NV097_SET_TRANSFORM_CONSTANT_LOAD:
+        /* Parameter is [0,192], but we use the load_slot to address components
+           so we have to multiply it by 4 */
         assert(parameter < NV2A_GPU_VERTEXSHADER_CONSTANTS);
-        kelvin->constant_load_slot = parameter;
+        //printf("Seeking to const slot %i [%i]\n",parameter,parameter-96);
+        kelvin->constant_load_slot = parameter*4;
         NV2A_GPU_DPRINTF("load to %d\n", parameter);
         break;
 
@@ -3876,16 +3351,9 @@ static void pgraph_method(NV2A_GPUState *d,
     default:
         NV2A_GPU_DPRINTF("    unhandled  (0x%02x 0x%08x)\n",
                      object->graphics_class, method);
-        {
-            char buffer[128];
-            sprintf(buffer,"NV2A: unhandled method in class 0x%02x: 0x%08x",
+        debugger_message("NV2A: unhandled method in class 0x%02x: 0x%08x",
                     object->graphics_class, 
                     method);
-            glDebugMessageInsert(GL_DEBUG_SOURCE_APPLICATION,
-                                 GL_DEBUG_TYPE_MARKER, 
-                                 0, GL_DEBUG_SEVERITY_NOTIFICATION, -1, 
-                                 buffer);
-        }
         break;
     }
     qemu_mutex_unlock(&d->pgraph.lock);
@@ -5770,6 +5238,50 @@ type_init(nv2a_gpu_register);
 
 void nv2a_gpu_init(PCIBus *bus, int devfn, MemoryRegion *ram)
 {
+
+#if 0 // Code to test GLSL stuff
+
+    unsigned char seafloor_xvu[] = {
+      0x78, 0x20, 0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1b, 0xc0, 0xef, 0x00,
+      0x6c, 0x18, 0x36, 0x08, 0x00, 0x88, 0x70, 0x20, 0x00, 0x00, 0x00, 0x00,
+      0x1b, 0xe0, 0xef, 0x00, 0x6c, 0x18, 0x36, 0x08, 0x00, 0x48, 0x70, 0x20,
+      0x00, 0x00, 0x00, 0x00, 0x1b, 0x00, 0xf0, 0x00, 0x6c, 0x18, 0x36, 0x08,
+      0x00, 0x28, 0x70, 0x20, 0x00, 0x00, 0x00, 0x00, 0x1b, 0x20, 0xf0, 0x00,
+      0x6c, 0x18, 0x36, 0x08, 0x00, 0x18, 0x70, 0x20, 0x00, 0x00, 0x00, 0x00,
+      0x1b, 0x06, 0xb1, 0x00, 0x6c, 0x18, 0x36, 0x08, 0xf8, 0x0f, 0x20, 0x28,
+      0x00, 0x00, 0x00, 0x00, 0x1b, 0x40, 0x31, 0x00, 0x6c, 0x10, 0x36, 0x0c,
+      0x18, 0xf8, 0x70, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x51, 0x00,
+      0x6c, 0x18, 0x36, 0x24, 0x20, 0xf8, 0x70, 0x20, 0x00, 0x00, 0x00, 0x00,
+      0x1b, 0x0c, 0x20, 0x00, 0x6c, 0x10, 0x36, 0x08, 0x48, 0xc8, 0x70, 0x20,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x51, 0x00, 0x6c, 0x10, 0x54, 0x0c,
+      0xf8, 0x0f, 0x30, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x15, 0x80, 0x71, 0x00,
+      0xa8, 0x12, 0x36, 0x34, 0x50, 0xc8, 0x70, 0x30, 0x00, 0x00, 0x00, 0x00,
+      0x1b, 0x40, 0xf2, 0x00, 0x6c, 0x18, 0x36, 0x08, 0xf8, 0x0f, 0x40, 0x28,
+      0x00, 0x00, 0x00, 0x00, 0x1b, 0x60, 0xf2, 0x00, 0x6c, 0x18, 0x36, 0x08,
+      0xf8, 0x0f, 0x40, 0x24, 0x00, 0x00, 0x00, 0x00, 0x1b, 0x80, 0xf2, 0x00,
+      0x6c, 0x18, 0x36, 0x08, 0xf8, 0x0f, 0x50, 0x22, 0x00, 0x00, 0x00, 0x00,
+      0xaa, 0x61, 0x91, 0x00, 0x54, 0x19, 0x54, 0xc5, 0x28, 0x88, 0x70, 0x30,
+      0x00, 0x00, 0x00, 0x00, 0x1b, 0x00, 0x00, 0x04, 0xa9, 0x12, 0x36, 0x08,
+      0xf8, 0x0f, 0x12, 0x50, 0x00, 0x00, 0x00, 0x00, 0x1b, 0x40, 0x47, 0x06,
+      0xff, 0x1b, 0x36, 0xc4, 0x00, 0xe8, 0x18, 0x10, 0x00, 0x00, 0x00, 0x00,
+      0x15, 0x00, 0x40, 0x00, 0x6c, 0x28, 0x54, 0x45, 0x58, 0xc8, 0x70, 0x20,
+      0x00, 0x00, 0x00, 0x00, 0x1b, 0x60, 0x87, 0x00, 0x6c, 0x28, 0x00, 0xc4,
+      0x01, 0xe8, 0x70, 0x30
+    };
+
+
+    QString *program_code_glsl = vsh_translate(VSH_VERSION_XVS,
+                                               &seafloor_xvu[4],
+                                               136*4);
+
+    const char* program_code_str = qstring_get_str(program_code_glsl);
+
+    printf("%s\n",program_code_str);
+    exit(5);
+#endif
+
+
+
     PCIDevice *dev = pci_create_simple(bus, devfn, "nv2a");
     NV2A_GPUState *d = NV2A_GPU_DEVICE(dev);
     nv2a_gpu_init_memory(d, ram);

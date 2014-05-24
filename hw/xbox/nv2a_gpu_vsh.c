@@ -1,6 +1,7 @@
 /*
  * QEMU Geforce NV2A GPU vertex shader translation
  *
+ * Copyright (c) 2014 Jannik Vogel
  * Copyright (c) 2012 espes
  *
  * Based on:
@@ -222,26 +223,47 @@ static const VshOpcodeParams mac_opcode_params[] = {
 };
 
 
-
+#if 0
 static const char* mask_str[] = {
             // xyzw xyzw
     "",     // 0000 ____
-    ".w",   // 0001 ___w
-    ".z",   // 0010 __z_
-    ".zw",  // 0011 __zw
-    ".y",   // 0100 _y__
-    ".yw",  // 0101 _y_w
-    ".yz",  // 0110 _yz_
-    ".yzw", // 0111 _yzw
-    ".x",   // 1000 x___
-    ".xw",  // 1001 x__w
-    ".xz",  // 1010 x_z_
-    ".xzw", // 1011 x_zw
-    ".xy",  // 1100 xy__
-    ".xyw", // 1101 xy_w
-    ".xyz", // 1110 xyz_
+    ".waaa",   // 0001 ___w
+    ".zaaa",   // 0010 __z_
+    ".zwaa",  // 0011 __zw
+    ".yaaa",   // 0100 _y__
+    ".ywaa",  // 0101 _y_w
+    ".yzaa",  // 0110 _yz_
+    ".yzwa", // 0111 _yzw
+    ".xaaa",   // 1000 x___
+    ".xwaa",  // 1001 x__w
+    ".xzaa",  // 1010 x_z_
+    ".xzwa", // 1011 x_zw
+    ".xyaa",  // 1100 xy__
+    ".xywa", // 1101 xy_w
+    ".xyza", // 1110 xyz_
     ""//.xyzw  1111 xyzw
 };
+#else
+static const char* mask_str[] = {
+            // xyzw xyzw
+    "",     // 0000 ____
+    ",w",   // 0001 ___w
+    ",z",   // 0010 __z_
+    ",zw",  // 0011 __zw
+    ",y",   // 0100 _y__
+    ",yw",  // 0101 _y_w
+    ",yz",  // 0110 _yz_
+    ",yzw", // 0111 _yzw
+    ",x",   // 1000 x___
+    ",xw",  // 1001 x__w
+    ",xz",  // 1010 x_z_
+    ",xzw", // 1011 x_zw
+    ",xy",  // 1100 xy__
+    ",xyw", // 1101 xy_w
+    ",xyz", // 1110 xyz_
+    ",xyzw"//.xyzw  1111 xyzw
+};
+#endif
 
 /* Note: OpenGL seems to be case-sensitive, and requires upper-case opcodes! */
 static const char* mac_opcode[] = {
@@ -265,7 +287,7 @@ static const char* ilu_opcode[] = {
     "NOP",
     "MOV",
     "RCP",
-    "RCP", // Was RCC
+    "RCC",
     "RSQ",
     "EXP",
     "LOG",
@@ -284,7 +306,7 @@ static bool ilu_force_scalar[] = {
 };
 
 static const char* out_reg_name[] = {
-    "R12", // "oPos",
+    "oPos",
     "???",
     "???",
     "oD0",
@@ -327,7 +349,7 @@ static int16_t convert_c_register(const int16_t c_reg)
 {
     int16_t r = ((((c_reg >> 5) & 7) - 3) * 32) + (c_reg & 31);
     r += VSH_D3DSCM_CORRECTION; /* to map -96..95 to 0..191 */
-    return r;
+    return r; //FIXME: = c_reg?!
 }
 
 
@@ -341,7 +363,7 @@ static QString* decode_swizzle(uint32_t *shader_token,
     /* some microcode instructions force a scalar value */
     if (swizzle_field == FLD_C_SWZ_X
         && ilu_force_scalar[vsh_get_field(shader_token, FLD_ILU)]) {
-        x = y = z = w = x = vsh_get_field(shader_token, swizzle_field);
+        x = y = z = w = vsh_get_field(shader_token, swizzle_field);
     } else {
         x = vsh_get_field(shader_token, swizzle_field++);
         y = vsh_get_field(shader_token, swizzle_field++);
@@ -352,21 +374,23 @@ static QString* decode_swizzle(uint32_t *shader_token,
     if (x == SWIZZLE_X && y == SWIZZLE_Y
         && z == SWIZZLE_Z && w == SWIZZLE_W) {
         /* Don't print the swizzle if it's .xyzw */
-        return qstring_from_str("");
+        return qstring_from_str(""); // Will turn ".xyzw" into "."
     /* Don't print duplicates */
     } else if (x == y && y == z && z == w) {
         return qstring_from_str((char[]){'.', swizzle_str[x], '\0'});
+#if 0
     } else if (x == y && z == w) {
         return qstring_from_str((char[]){'.',
-            swizzle_str[x], swizzle_str[y], '\0'});
-    } /*else if (z == w) {
+            swizzle_str[x], swizzle_str[y], '\0'}); //FIXME: !!!! Would turn ".xxyy" into ".xy" ?! !!!!
+    /* } else if (z == w) {
         return qstring_from_str((char[]){'.',
-            swizzle_str[x], swizzle_str[y], swizzle_str[z], '\0'});
-    }*/ else {
+            swizzle_str[x], swizzle_str[y], swizzle_str[z], '\0'}); */
+#endif
+    } else {
         return qstring_from_str((char[]){'.',
                                        swizzle_str[x], swizzle_str[y],
                                        swizzle_str[z], swizzle_str[w],
-                                       '\0'});
+                                       '\0'}); // Normal swizzle mask
     }
 }
 
@@ -400,12 +424,13 @@ static QString* decode_opcode_input(uint32_t *shader_token,
     case PARAM_C:
         reg_num = convert_c_register(vsh_get_field(shader_token, FLD_CONST));
         if (vsh_get_field(shader_token, FLD_A0X) > 0) {
-            snprintf(tmp, sizeof(tmp), "c[A0+%d]", reg_num);
+            snprintf(tmp, sizeof(tmp), "c[A0+%d]", reg_num); //FIXME: does this really require the "correction" doe in convert_c_register?!
         } else {
             snprintf(tmp, sizeof(tmp), "c[%d]", reg_num);
         }
         break;
     default:
+        printf("Param: 0x%x\n", param);
         assert(false);
     }
     qstring_append(ret_str, tmp);
@@ -444,16 +469,18 @@ static QString* decode_opcode(uint32_t *shader_token,
 
     if (mask > 0) {
         if (strcmp(opcode, mac_opcode[MAC_ARL]) == 0) {
-            qstring_append(ret, opcode);
+            qstring_append(ret, "  ARL(a0");
             qstring_append(ret, qstring_get_str(inputs));
             qstring_append(ret, ";\n");
         } else {
+            qstring_append(ret, "  ");
             qstring_append(ret, opcode);
-            qstring_append(ret, " R");
+            qstring_append(ret, "(");
+            qstring_append(ret, "R");
             qstring_append_int(ret, reg_num);
             qstring_append(ret, mask_str[mask]);
             qstring_append(ret, qstring_get_str(inputs));
-            qstring_append(ret, ";\n");
+            qstring_append(ret, ");\n");
         }
     }
 
@@ -462,15 +489,17 @@ static QString* decode_opcode(uint32_t *shader_token,
         /* Only if it's not masked away: */
         && vsh_get_field(shader_token, FLD_OUT_O_MASK) != 0) {
 
+        qstring_append(ret, "  ");
         qstring_append(ret, opcode);
+        qstring_append(ret, "(");
+
         if (vsh_get_field(shader_token, FLD_OUT_ORB) == OUTPUT_C) {
             /* TODO : Emulate writeable const registers */
-            qstring_append(ret, " c");
+            qstring_append(ret, "c");
             qstring_append_int(ret,
                 convert_c_register(
                     vsh_get_field(shader_token, FLD_OUT_ADDRESS)));
         } else {
-            qstring_append_chr(ret, ' ');
             qstring_append(ret,
                 out_reg_name[
                     vsh_get_field(shader_token, FLD_OUT_ADDRESS) & 0xF]);
@@ -479,7 +508,7 @@ static QString* decode_opcode(uint32_t *shader_token,
             mask_str[
                 vsh_get_field(shader_token, FLD_OUT_O_MASK)]);
         qstring_append(ret, qstring_get_str(inputs));
-        qstring_append(ret, ";\n");
+        qstring_append(ret, ");\n");
     }
 
     return ret;
@@ -574,9 +603,26 @@ static QString* decode_token(uint32_t *shader_token)
  * shader, and the use of the OpenGL fixed-function pipeline without a shader.
  */
 static const char* vsh_header =
-    "!!ARBvp1.0\n"
-    "TEMP R0,R1,R2,R3,R4,R5,R6,R7,R8,R9,R10,R11,R12;\n"
-    "ADDRESS A0;\n"
+    "#version 110\n"
+    "\n"
+    //FIXME: I just assumed this is true for all registers?!
+    "vec4 R0 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 R1 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 R2 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 R3 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 R4 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 R5 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 R6 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 R7 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 R8 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 R9 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 R10 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 R11 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 R12 = vec4(0.0,0.0,0.0,1.0);\n"
+    "\n"
+    //FIXME: What is a0 initialized as?
+    "int A0 = 0;\n"
+    "\n"
 #if 0
     "ATTRIB v0 = vertex.position;" // (See "conventional" note above)
     "ATTRIB v1 = vertex.%s;" // Note : We replace this with "weight" or "attrib[1]" depending GL_ARB_vertex_blend
@@ -591,23 +637,28 @@ static const char* vsh_header =
     "ATTRIB v10 = vertex.texcoord[2];"
     "ATTRIB v11 = vertex.texcoord[3];"
 #else
-    "ATTRIB v0 = vertex.attrib[0];\n"
-    "ATTRIB v1 = vertex.attrib[1];\n"
-    "ATTRIB v2 = vertex.attrib[2];\n"
-    "ATTRIB v3 = vertex.attrib[3];\n"
-    "ATTRIB v4 = vertex.attrib[4];\n"
-    "ATTRIB v5 = vertex.attrib[5];\n"
-    "ATTRIB v6 = vertex.attrib[6];\n"
-    "ATTRIB v7 = vertex.attrib[7];\n"
-    "ATTRIB v8 = vertex.attrib[8];\n"
-    "ATTRIB v9 = vertex.attrib[9];\n"
-    "ATTRIB v10 = vertex.attrib[10];\n"
-    "ATTRIB v11 = vertex.attrib[11];\n"
+    "attribute vec4 v0;\n"
+    "attribute vec4 v1;\n"
+    "attribute vec4 v2;\n"
+    "attribute vec4 v3;\n"
+    "attribute vec4 v4;\n"
+    "attribute vec4 v5;\n"
+    "attribute vec4 v6;\n"
+    "attribute vec4 v7;\n"
+    "attribute vec4 v8;\n"
+    "attribute vec4 v9;\n"
+    "attribute vec4 v10;\n"
+    "attribute vec4 v11;\n"
 #endif
-    "ATTRIB v12 = vertex.attrib[12];\n"
-    "ATTRIB v13 = vertex.attrib[13];\n"
-    "ATTRIB v14 = vertex.attrib[14];\n"
-    "ATTRIB v15 = vertex.attrib[15];\n"
+    "attribute vec4 v12;\n"
+    "attribute vec4 v13;\n"
+    "attribute vec4 v14;\n"
+    "attribute vec4 v15;\n"
+
+    "\n"
+
+/*
+//FIXME: temp var?
     "OUTPUT oPos = result.position;\n"
     "OUTPUT oD0 = result.color.front.primary;\n"
     "OUTPUT oD1 = result.color.front.secondary;\n"
@@ -619,53 +670,331 @@ static const char* vsh_header =
     "OUTPUT oT1 = result.texcoord[1];\n"
     "OUTPUT oT2 = result.texcoord[2];\n"
     "OUTPUT oT3 = result.texcoord[3];\n"
+*/
+    "#define oPos R12 /* oPos is a mirror of R12 */\n"
+    "vec4 oD0 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oD1 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oB0 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oB1 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oPts = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oFog = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oT0 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oT1 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oT2 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oT3 = vec4(0.0,0.0,0.0,1.0);\n"
 
-    /* All constants in 1 array declaration (requires NV_gpu_program4?) */
-    "PARAM c[] = { program.env[0..191] };\n"
+    "\n"
 
-    /* w component of outputs are expected to be initialised to 1 */
-    "MOV R12, 0.0;\n"
-    "MOV R12.w, 1.0;\n"
-    "MOV oD0.w, 1.0;\n"
-    "MOV oD1.w, 1.0;\n"
-    "MOV oB0.w, 1.0;\n"
-    "MOV oB1.w, 1.0;\n"
-    "MOV oT0.w, 1.0;\n"
-    "MOV oT1.w, 1.0;\n"
-    "MOV oT2.w, 1.0;\n"
-    "MOV oT3.w, 1.0;\n";
+    /* All constants in 1 array declaration */
+//FIXME: it's probably wise to change the c[x] to c##x later because it forces us to allocate and reupload around 100*4*4 bytes (~1.5kB) of useless data on/to the GPU :P
+   "uniform vec4 c[192];\n"
+   "#define viewport_scale c[58] /* This seems to be hardwired? See comment in nv2a_gpu.c */\n"
+   "#define viewport_offset c[59] /* Same as above */\n"
+   "uniform vec2 cliprange;\n"
 
+/*
+
+
+FIXME: !!!!!! MAJOR BUG !!!!!!
+JayFoxRox: mhhh I believe there is a bug in my glsl stuff too I didn't even think about before
+JayFoxRox: but if mask is yz it would result in: dest.yz = OP().yz when it should be dest.yz = OP().xy
+
+
+
+*/
+
+// Code from pages linked here http://msdn.microsoft.com/en-us/library/windows/desktop/bb174703%28v=vs.85%29.aspx
+// and also https://www.opengl.org/registry/specs/NV/vertex_program1_1.txt
+// Some code was also written from scratch because it seemed easy - if you are bored verify the behaviour!
+    "\n"
+    "/* LUT to convert write mask to same amount of components */\n"
+                                  // 0000 ____ (NOP) writes not inserted into shader
+    "#define COMPONENTS_w    x\n" // 0001 ___w
+    "#define COMPONENTS_z    x\n"  // 0010 __z_
+    "#define COMPONENTS_y    x\n"   // 0100 _y__
+    "#define COMPONENTS_x    x\n"   // 1000 x___
+    "#define COMPONENTS_zw   xy\n"  // 0011 __zw
+    "#define COMPONENTS_yw   xy\n"  // 0101 _y_w
+    "#define COMPONENTS_yz   xy\n"  // 0110 _yz_
+    "#define COMPONENTS_xw   xy\n"  // 1001 x__w
+    "#define COMPONENTS_xz   xy\n"  // 1010 x_z_
+    "#define COMPONENTS_xy   xy\n"  // 1100 xy__
+    "#define COMPONENTS_yzw  xyz\n" // 0111 _yzw
+    "#define COMPONENTS_xzw  xyz\n" // 1011 x_zw
+    "#define COMPONENTS_xyw  xyz\n" // 1101 xy_w
+    "#define COMPONENTS_xyz  xyz\n" // 1110 xyz_
+    "#define COMPONENTS_xyzw xyzw\n" // 1111 xyzw (alternative)
+    "#define COMPONENTS_     xyzw\n" // 1111 xyzw (alternative)
+    "\n"
+    "#define MOV(dest,mask, src) dest.mask = _MOV(vec4(src)).COMPONENTS_ ## mask\n"
+    "vec4 _MOV(vec4 src)\n" 
+    "{\n"
+    "  return src;\n"
+    "}\n"
+    "\n"
+    "#define MUL(dest,mask, src0, src1) dest.mask = _MUL(vec4(src0), vec4(src1)).COMPONENTS_ ## mask\n"
+    "vec4 _MUL(vec4 src0, vec4 src1)\n" 
+    "{\n"
+    "  return src0 * src1;\n"
+    "}\n"
+    "\n"
+    "#define ADD(dest,mask, src0, src1) dest.mask = _ADD(vec4(src0), vec4(src1)).COMPONENTS_ ## mask\n"
+    "vec4 _ADD(vec4 src0, vec4 src1)\n" 
+    "{\n"
+    "  return src0 + src1;\n"
+    "}\n"
+    "\n"
+    "#define MAD(dest,mask, src0, src1, src2) dest.mask = _MAD(vec4(src0), vec4(src1), vec4(src2)).COMPONENTS_ ## mask\n"
+    "vec4 _MAD(vec4 src0, vec4 src1, vec4 src2)\n" 
+    "{\n"
+    "  return src0 * src1 + src2;\n"
+    "}\n"
+    "\n"
+    "#define DP3(dest,mask, src0, src1) dest.mask = _DP3(vec4(src0), vec4(src1)).COMPONENTS_ ## mask\n"
+    "vec4 _DP3(vec4 src0, vec4 src1)\n" 
+    "{\n"
+    "  return vec4(dot(src0.xyz, src1.xyz));\n"
+    "}\n"
+    "\n"
+    "#define DPH(dest,mask, src0, src1) dest.mask = _DPH(vec4(src0), vec4(src1)).COMPONENTS_ ## mask\n"
+    "vec4 _DPH(vec4 src0, vec4 src1)\n" 
+    "{\n"
+    "  return vec4(dot(vec4(src0.xyz, 1.0), src1));\n"
+    "}\n"
+    "\n"
+    "#define DP4(dest,mask, src0, src1) dest.mask = _DP4(vec4(src0), vec4(src1)).COMPONENTS_ ## mask\n"
+    "vec4 _DP4(vec4 src0, vec4 src1)\n" 
+    "{\n"
+    "  return vec4(dot(src0, src1));\n"
+    "}\n"
+    "\n"
+    "#define DST(dest,mask, src0, src1) dest.mask = _DST(vec4(src0), vec4(src1)).COMPONENTS_ ## mask\n"
+    "vec4 _DST(vec4 src0, vec4 src1)\n" 
+    "{\n"
+    "  return vec4(1.0,\n"
+    "              src0.y * src1.y,\n"
+    "              src0.z,\n"
+    "              src1.w);\n"
+    "}\n"
+    "\n"
+    "#define MIN(dest,mask, src0, src1) dest.mask = _MIN(vec4(src0), vec4(src1)).COMPONENTS_ ## mask\n"
+    "vec4 _MIN(vec4 src0, vec4 src1)\n" 
+    "{\n"
+    "  return min(src0, src1);\n"
+    "}\n"
+    "\n"
+    "#define MAX(dest,mask, src0, src1) dest.mask = _MAX(vec4(src0), vec4(src1)).COMPONENTS_ ## mask\n"
+    "vec4 _MAX(vec4 src0, vec4 src1)\n" 
+    "{\n"
+    "  return max(src0, src1);\n"
+    "}\n"
+    "\n"
+    "#define SLT(dest,mask, src0, src1) dest.mask = _SLT(vec4(src0), vec4(src1)).COMPONENTS_ ## mask\n"
+    "vec4 _SLT(vec4 src0, vec4 src1)\n" 
+    "{\n"
+    "  return vec4(src0.x < src1.x ? 1.0 : 0.0,\n"
+    "              src0.y < src1.y ? 1.0 : 0.0,\n"
+    "              src0.z < src1.z ? 1.0 : 0.0,\n"
+    "              src0.w < src1.w ? 1.0 : 0.0);\n"
+    "}\n"
+    "\n"
+    "#define ARL(dest,mask, src) dest = _ARL(vec4(src).x)\n"
+    "int _ARL(float src)\n" 
+    "{\n"
+    "  return int(src);\n"
+    "}\n"
+    "\n"
+    "#define SGE(dest,mask, src0, src1) dest.mask = _SGE(vec4(src0), vec4(src1)).COMPONENTS_ ## mask\n"
+    "vec4 _SGE(vec4 src0, vec4 src1)\n" 
+    "{\n"
+    "  return vec4(src0.x >= src1.x ? 1.0 : 0.0,\n"
+    "              src0.y >= src1.y ? 1.0 : 0.0,\n"
+    "              src0.z >= src1.z ? 1.0 : 0.0,\n"
+    "              src0.w >= src1.w ? 1.0 : 0.0);\n"
+    "}\n"
+    "\n"
+    "#define RCP(dest,mask, src) dest.mask = _RCP(vec4(src).x).COMPONENTS_ ## mask\n"
+    "vec4 _RCP(float src)\n" 
+    "{\n"
+    "  return vec4(1.0 / src);\n"
+    "}\n"
+    "\n"
+    "#define RCC(dest,mask, src) dest.mask = _RCC(vec4(src).x).COMPONENTS_ ## mask\n"
+    "vec4 _RCC(float src)\n" 
+    "{\n"
+    "  float t = 1.0 / src;\n"
+    "  if (t > 0.0) {\n"
+    "    t = min(t, 1.884467e+019);\n"
+    "    t = max(t, 5.42101e-020);\n"
+    "  } else {\n"
+    "    t = max(t, -1.884467e+019);\n"
+    "    t = min(t, -5.42101e-020);\n"
+    "  }\n"
+    "  return vec4(t);\n"
+    "}\n"
+    "\n"
+    "#define RSQ(dest,mask, src) dest.mask = _RSQ(vec4(src).x).COMPONENTS_ ## mask\n"
+    "vec4 _RSQ(float src)\n" 
+    "{\n"
+    "  return vec4(1.0 / sqrt(src));\n"
+    "}\n"
+    "\n"
+    "#define EXP(dest,mask, src) dest.mask = _EXP(vec4(src).x).COMPONENTS_ ## mask\n"
+    "vec4 _EXP(float src)\n" 
+    "{\n"
+    "  return vec4(exp2(src));\n"
+    "}\n"
+    "\n"
+    "#define LOG(dest,mask, src) dest.mask = _LOG(vec4(src).x).COMPONENTS_ ## mask\n"
+    "vec4 _LOG(float src)\n" 
+    "{\n"
+    "  return vec4(log2(src));\n"
+    "}\n"
+    "\n"
+    "#define LIT(dest,mask, src) dest.mask = _LIT(vec4(src)).COMPONENTS_ ## mask\n"
+    "vec4 _LIT(vec4 src)\n" 
+    "{\n"
+    "  vec4 t = vec4(1.0, 0.0, 0.0, 1.0);\n"
+    "  float power = src.w;\n"
+#if 0
+    //XXX: Limitation for 8.8 fixed point
+    "  power = max(power, -127.9961);\n"
+    "  power = min(power, 127.9961);\n"
+#endif
+    "  if (src.x > 0.0) {\n"
+    "    t.y = src.x;\n"
+    "    if (src.y > 0.0) {\n"
+    //XXX: Allowed approximation is EXP(power * LOG(src.y))
+    "      t.z = pow(src.y, power);\n"
+    "    }\n"
+    "  }\n"
+    "  return t;\n"
+    "}\n";
 
 QString* vsh_translate(uint16_t version,
                        uint32_t *tokens, unsigned int tokens_length)
 {
-    QString *ret = qstring_from_str(vsh_header);
-    
+    QString *body = qstring_from_str("\n");
+    QString *header = qstring_from_str(vsh_header);
+                          
+#ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
+    qstring_append(header,
+                   "\n"
+                   "/* Debug stuff */\n"
+                   "varying vec4 debug_v0;\n"
+                   "varying vec4 debug_v1;\n"
+                   "varying vec4 debug_v2;\n"
+                   "varying vec4 debug_v3;\n"
+                   "varying vec4 debug_v4;\n"
+                   "varying vec4 debug_v5;\n"
+                   "varying vec4 debug_v6;\n"
+                   "varying vec4 debug_v7;\n"
+                   "varying vec4 debug_v8;\n"
+                   "varying vec4 debug_v9;\n"
+                   "varying vec4 debug_v10;\n"
+                   "varying vec4 debug_v11;\n"
+                   "varying vec4 debug_v12;\n"
+                   "varying vec4 debug_v13;\n"
+                   "varying vec4 debug_v14;\n"
+                   "varying vec4 debug_v15;\n"
+                   "varying vec4 debug_oPos;\n"
+                   "varying vec4 debug_oD0;\n"
+                   "varying vec4 debug_oD1;\n"
+                   "varying vec4 debug_oB0;\n"
+                   "varying vec4 debug_oB1;\n"
+                   "varying vec4 debug_oPts;\n"
+                   "varying vec4 debug_oFog;\n"
+                   "varying vec4 debug_oT0;\n"
+                   "varying vec4 debug_oT1;\n"
+                   "varying vec4 debug_oT2;\n"
+                   "varying vec4 debug_oT3;\n"
+                   "\n"
+                   "#define DEBUG_VAR(slot,var) debug_ ## slot ## _ ## var = var;\n"
+                   "#define DEBUG(slot) \\\n"
+                   "  DEBUG_VAR(slot,R0) \\\n"
+                   "  DEBUG_VAR(slot,R1) \\\n"
+                   "  DEBUG_VAR(slot,R2) \\\n"
+                   "  DEBUG_VAR(slot,R3) \\\n"
+                   "  DEBUG_VAR(slot,R4) \\\n"
+                   "  DEBUG_VAR(slot,R5) \\\n"
+                   "  DEBUG_VAR(slot,R6) \\\n"
+                   "  DEBUG_VAR(slot,R7) \\\n"
+                   "  DEBUG_VAR(slot,R8) \\\n"
+                   "  DEBUG_VAR(slot,R9) \\\n"
+                   "  DEBUG_VAR(slot,R10) \\\n"
+                   "  DEBUG_VAR(slot,R11) \\\n"
+                   "  DEBUG_VAR(slot,R12)\n"
+                   "\n"
+                   "#define DEBUG_VARYING_VAR(slot,var) varying vec4 debug_ ## slot ## _ ## var;\n"
+                   "#define DEBUG_VARYING(slot) \\\n"
+                   "  DEBUG_VARYING_VAR(slot,R0) \\\n"
+                   "  DEBUG_VARYING_VAR(slot,R1) \\\n"
+                   "  DEBUG_VARYING_VAR(slot,R2) \\\n"
+                   "  DEBUG_VARYING_VAR(slot,R3) \\\n"
+                   "  DEBUG_VARYING_VAR(slot,R4) \\\n"
+                   "  DEBUG_VARYING_VAR(slot,R5) \\\n"
+                   "  DEBUG_VARYING_VAR(slot,R6) \\\n"
+                   "  DEBUG_VARYING_VAR(slot,R7) \\\n"
+                   "  DEBUG_VARYING_VAR(slot,R8) \\\n"
+                   "  DEBUG_VARYING_VAR(slot,R9) \\\n"
+                   "  DEBUG_VARYING_VAR(slot,R10) \\\n"
+                   "  DEBUG_VARYING_VAR(slot,R11) \\\n"
+                   "  DEBUG_VARYING_VAR(slot,R12)\n"
+                   "\n");
+    qstring_append(body,
+                   "  /* Debug input */\n"
+                   "  debug_v0 = v0;\n"
+                   "  debug_v1 = v1;\n"
+                   "  debug_v2 = v2;\n"
+                   "  debug_v3 = v3;\n"
+                   "  debug_v4 = v4;\n"
+                   "  debug_v5 = v5;\n"
+                   "  debug_v6 = v6;\n"
+                   "  debug_v7 = v7;\n"
+                   "  debug_v8 = v8;\n"
+                   "  debug_v9 = v9;\n"
+                   "  debug_v10 = v10;\n"
+                   "  debug_v11 = v11;\n"
+                   "  debug_v12 = v12;\n"
+                   "  debug_v13 = v13;\n"
+                   "  debug_v14 = v14;\n"
+                   "  debug_v15 = v15;\n"
+                   "\n");
+#endif
+
+
+    bool has_final = false;
     uint32_t *cur_token = tokens;
     while (cur_token-tokens < tokens_length) {
+        unsigned int slot = (cur_token-tokens) / VSH_TOKEN_SIZE;
         QString *token_str = decode_token(cur_token);
-        qstring_append(ret, qstring_get_str(token_str));
+        qstring_append_fmt(body,
+                           "  /* Slot %d: 0x%08X 0x%08X 0x%08X 0x%08X */\n",
+                           slot,
+                           cur_token[0],cur_token[1],cur_token[2],cur_token[3]);
+        qstring_append(body, qstring_get_str(token_str));
+#ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
+        qstring_append_fmt(header,"DEBUG_VARYING(%d)\n",slot);
+        qstring_append_fmt(body,"  DEBUG(%d)\n",slot);
+#endif
+        qstring_append(body, "\n");
         QDECREF(token_str);
 
         if (vsh_get_field(cur_token, FLD_FINAL)) {
+            printf("Final at %u\n",slot);
+            has_final = true;
             break;
         }
         cur_token += VSH_TOKEN_SIZE;
     }
+    assert(has_final);
 
     /* Note : Since we replaced oPos with r12 in the above decoding,
      * we have to assign oPos at the end; This can be done in two ways;
      * 1) When the shader is complete (including transformations),
      *    we could just do a 'MOV oPos, R12;' and be done with it.
-     * 2) In case of D3DFVF_XYZRHW, it seems the NV2A applies the mvp
-     *    (model/view/projection) matrix transformation AFTER executing
-     *    the shader (but OpenGL expects *the*shader* to handle this
-     *    transformation).
-     * Until we can discern these two situations, we apply the matrix 
-     * transformation :
-     * TODO : What should we do about normals, eye-space lighting and all that?
      */
-    qstring_append(ret,
+    qstring_append(body,
 /*
     '# Dxbx addition : Transform the vertex to clip coordinates :'
     "DP4 R0.x, mvp[0], R12;"
@@ -682,20 +1011,55 @@ QString* vsh_translate(uint16_t version,
          * but they're not necessarily present.
          * Same idea as above I think, but dono what the mvp stuff is about...
         */
-        "# un-screenspace transform\n"
-        "ADD R12, R12, -c[59];\n"
-        "RCP R1.x, c[58].x;\n"
-        "RCP R1.y, c[58].y;\n"
+#ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
+        "  /* Debug output */\n"
+        "  debug_oPos = oPos;\n"
+        "  debug_oD0 = oD0;\n"
+        "  debug_oD1 = oD1;\n"
+        "  debug_oB0 = oB0;\n"
+        "  debug_oB1 = oB1;\n"
+        "  debug_oPts = oPts;\n"
+        "  debug_oFog = oFog;\n"
+        "  debug_oT0 = oT0;\n"
+        "  debug_oT1 = oT1;\n"
+        "  debug_oT2 = oT2;\n"
+        "  debug_oT3 = oT3;\n"
+        "\n"
+#endif
+#if 1
+        "  /* Un-screenspace transform */\n"
+        "  R12.xyz = R12.xyz - viewport_offset.xyz;\n"
+        "  R1.x = 1.0 / viewport_scale.x;\n"
+        "  R1.y = 1.0 / viewport_scale.y;\n"
 
         /* scale_z = view_z == 0 ? 1 : (1 / view_z) */
-        "ABS R1.z, c[58].z;\n"
-        "SGE R1.z, -R1.z, 0;\n"
-        "ADD R1.z, R1.z, c[58].z;\n"
-        "RCP R1.z, R1.z;\n"
+        "  if (viewport_scale.z == 0.0) {\n"
+        "    R1.z = 1.0;\n"
+        "  } else {\n"
+        "    R1.z = 1.0 / viewport_scale.z;\n"
+        "  }\n"
 
-        "MUL R12.xyz, R12, R1;\n"
-        "MOV R12.w, 1.0;\n"
-
+        "  R12.xyz = R12.xyz * R1.xyz;\n"
+#if 1
+        "  R12.xyz *= R12.w;\n" //This breaks 2D? Maybe w is zero?
+#else
+        "  R12.w = 1.0;\n" //This breaks 2D? Maybe w is zero?
+#endif
+        "\n"
+#else
+//FIXME: Use surface width / height / zeta max
+      "R12.z /= 16777215.0;\n" // Z[0;1]
+      "R12.z *= (cliprange.y - cliprange.x) / 16777215.0;\n" // Scale so [0;zmax] -> [0;cliprange_size]
+      "R12.z -= cliprange.x / 16777215.0;\n" // Move down so [clipmin_min;clipmin_max]
+      // X = [0;surface_width]; Y = [surface_height;0]; Z = [0;1]; W = ???
+      "R12.xyz = R12.xyz / vec3(640.0,480.0,1.0);\n"
+      // X,Z = [0;1]; Y = [1;0]; W = ???
+      "R12.xyz = R12.xyz * vec3(2.0) - vec3(1.0);\n"
+      "R12.y *= -1.0;\n"
+      "R12.w = 1.0;\n"
+      // X,Y,Z = [-1;+1]; W = 1
+        "\n"
+#endif
         /* undo the perspective divide? */
         //"MUL R12.xyz, R12, R12.w;\n"
 
@@ -710,10 +1074,29 @@ QString* vsh_translate(uint16_t version,
         //"# Apply Z coord mapping\n"
         //"ADD R12.z, R12.z, R12.z;\n"
         //"ADD R12.z, R12.z, -R12.w;\n"
-
-        "# End of shader:\n"
-        "MOV oPos, R12;\n"
-        "END"
+        "  /* Set outputs */\n"
+        "  gl_Position = oPos;\n"
+        "  gl_FrontColor = oD0;\n"
+        "  gl_FrontSecondaryColor = oD1;\n"
+        "  gl_BackColor = oB0;\n"
+        "  gl_BackSecondaryColor = oB1;\n"
+        "  gl_PointSize = oPts.x;\n"
+        "  gl_FogFragCoord = oFog.x;\n"
+        "  gl_TexCoord[0] = oT0;\n"
+        "  gl_TexCoord[1] = oT1;\n"
+        "  gl_TexCoord[2] = oT2;\n"
+        "  gl_TexCoord[3] = oT3;\n"
+        "\n"
     );
+
+    QString *ret = qstring_new();
+    qstring_append(ret, qstring_get_str(header));
+    qstring_append(ret,"\n"
+                       "void main(void)\n"
+                       "{\n");
+    qstring_append(ret, qstring_get_str(body));
+    qstring_append(ret,"}\n");
+    QDECREF(header);
+    QDECREF(body);
     return ret;
 }

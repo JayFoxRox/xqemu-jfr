@@ -22,6 +22,8 @@
 #ifndef HW_NV2A_GPU_VSH_H
 #define HW_NV2A_GPU_VSH_H
 
+//#define DEBUG_NV2A_GPU_SHADER_FEEDBACK
+
 #include "qapi/qmp/qstring.h"
 
 // vs.1.1, not an official value
@@ -38,6 +40,5 @@
 
 QString* vsh_translate(uint16_t version,
                        uint32_t *tokens, unsigned int tokens_length);
-
 
 #endif

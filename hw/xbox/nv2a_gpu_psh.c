@@ -546,21 +546,21 @@ static QString* psh_convert(struct PixelShader *ps)
                 sampler_type = "sampler2D";
                 sampler_function = "texture2D";
             }
-            qstring_append_fmt(vars, "vec4 t%d = %s(texSamp%d, gl_TexCoord[%d].xy);\n",
+            qstring_append_fmt(vars, "  vec4 t%d = %s(texSamp%d, gl_TexCoord[%d].xy);\n",
                                i, sampler_function, i, i);
             break;
         case PS_TEXTUREMODES_PROJECT3D:
             sampler_type = "sampler3D";
-            qstring_append_fmt(vars, "vec4 t%d = texture3D(texSamp%d, gl_TexCoord[%d].xyz);\n",
+            qstring_append_fmt(vars, "  vec4 t%d = texture3D(texSamp%d, gl_TexCoord[%d].xyz);\n",
                                i, i, i);
             break;
         case PS_TEXTUREMODES_CUBEMAP:
             sampler_type = "samplerCube";
-            qstring_append_fmt(vars, "vec4 t%d = textureCube(texSamp%d, gl_TexCoord[%d].xyz);\n",
+            qstring_append_fmt(vars, "  vec4 t%d = textureCube(texSamp%d, gl_TexCoord[%d].xyz);\n",
                                i, i, i);
             break;
         case PS_TEXTUREMODES_PASSTHRU:
-            qstring_append_fmt(vars, "vec4 t%d;\n", i);
+            qstring_append_fmt(vars, "  vec4 t%d;\n", i);
             break;
         default:
             printf("%x\n", ps->tex_modes[i]);
@@ -576,14 +576,16 @@ static QString* psh_convert(struct PixelShader *ps)
     ps->code = qstring_new();
     for (i = 0; i < ps->num_stages; i++) {
         ps->cur_stage = i;
-        qstring_append_fmt(ps->code, "// Stage %d\n", i);
+        qstring_append_fmt(ps->code, "  /* Stage %d */\n", i);
+        qstring_append_fmt(ps->code, "  ");
         add_stage_code(ps, ps->stage[i].rgb_input, ps->stage[i].rgb_output, "rgb", false);
+        qstring_append_fmt(ps->code, "  ");
         add_stage_code(ps, ps->stage[i].alpha_input, ps->stage[i].alpha_output, "a", true);
     }
 
     if (ps->final_input.enabled) {
         ps->cur_stage = 8;
-        qstring_append(ps->code, "// Final Combiner\n");
+        qstring_append(ps->code, "  /* Final Combiner */\n");
         add_final_stage_code(ps, ps->final_input);
     }
 
@@ -591,9 +593,9 @@ static QString* psh_convert(struct PixelShader *ps)
         qstring_append_fmt(vars, "vec4 %s;\n", ps->var_refs[i]);
         if (strcmp(ps->var_refs[i], "r0") == 0) {
             if (ps->tex_modes[0] != PS_TEXTUREMODES_NONE) {
-                qstring_append(vars, "r0.a = t0.a;\n");
+                qstring_append(vars, "  r0.a = t0.a;\n");
             } else {
-                qstring_append(vars, "r0.a = 1.0;\n");
+                qstring_append(vars, "  r0.a = 1.0;\n");
             }
         }
     }
@@ -608,7 +610,7 @@ static QString* psh_convert(struct PixelShader *ps)
     qstring_append(final, "void main() {\n");
     qstring_append(final, qstring_get_str(vars));
     qstring_append(final, qstring_get_str(ps->code));
-    qstring_append(final, "gl_FragColor = r0;\n");
+    qstring_append(final, "  gl_FragColor = r0;\n");
     qstring_append(final, "}\n");
 
     QDECREF(preflight);
