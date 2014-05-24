@@ -229,7 +229,7 @@ static const ColorFormatInfo kelvin_color_format_map[66] = {
     [NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_X8R8G8B8] =
         {4, true, GL_RGB,  GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV},
     [NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_Y16_FIXED] =
-        {2, true, GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_SHORT},
+        {2, true, GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT},
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8B8G8R8] =
         {4, false, GL_RGBA, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV},
     [NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8B8G8R8] =
@@ -531,6 +531,9 @@ typedef struct PGRAPHState {
 
 
     hwaddr dma_color, dma_zeta;
+#ifdef CACHE_DMA
+    DMAObject dma_object_color, dma_object_zeta;
+#endif
     Surface surface_color, surface_zeta;
     uint8_t surface_type;
     uint8_t surface_anti_aliasing;
@@ -558,8 +561,8 @@ typedef struct PGRAPHState {
 
     GloContext *gl_context;
     GLuint gl_framebuffer;
-    GLuint gl_renderbuffer;
-    GLuint gl_depth_renderbuffer;
+    GLuint gl_color_renderbuffer;
+    GLuint gl_zeta_renderbuffer;
     GraphicsSubchannel subchannel_data[NV2A_GPU_NUM_SUBCHANNELS];
 
 
@@ -1231,7 +1234,7 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
                 debugger_message("NV2A: unhandled texture->color_format 0x%0x",
                                  texture->color_format);
 
-#if 0
+#if 1
                 assert(0);
 #endif
                 continue;
@@ -1836,8 +1839,8 @@ static uint8_t* map_surface(NV2A_GPUState *d, Surface* s, DMAObject* dma, hwaddr
      * at the wrong time and get a invalid dma object.
      * Check that it's sane. */
     assert(dma->dma_class == NV_DMA_IN_MEMORY_CLASS);
-
-    assert(dma->address + s->offset != 0);
+printf("0x%x+0x%x\n",dma->address,s->offset);
+//    assert(dma->address + s->offset != 0);
     assert(s->offset <= dma->limit);
     assert(s->offset
             + s->pitch * d->pgraph.clip_height
@@ -1893,7 +1896,7 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
       rowl = s->pitch / bytes_per_pixel;
     }
 
-    assert(w >= (s->pitch/bytes_per_pixel));
+    assert(w <= (s->pitch/bytes_per_pixel));
     assert(d->pgraph.clip_width <= w);
     assert(d->pgraph.clip_height <= h);
 
@@ -1995,80 +1998,81 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
 /* DO NOT USE THIS FUNCTION DIRECTLY! Use pgraph_update_surfaces instead! */
 static void pgraph_update_surface_zeta(NV2A_GPUState *d, bool upload)
 {
-//FIXME FIXME FIXME: Broken feature because the read/draw-pixel operation does fail atm
-#if 0
-    /* Early out if we have no surface, otherwise load DMA object */
+
+    DMAObject zeta_dma;
+
+    /* Early out if we have no surface */
     Surface* s = &d->pgraph.surface_zeta;
     if (s->format == 0) { return; }
-    DMAObject zeta_dma = nv_dma_load(d, d->pgraph.dma_zeta);
 
-    /* Check dirty flags */
+
+if (s->offset == 0) {
+    //FIXME: I'm not sure why.. but this does happen during init!
+    debugger_message("Would have error'd! This might be bad?!");
+    return;
+}
+
+    /* Check dirty flags, load DMA object if necessary */
     if (upload) {
+#ifdef CACHE_DMA
+        zeta_dma = d->pgraph.dma_object_zeta;
+#else
+        zeta_dma = nv_dma_load(d, d->pgraph.dma_zeta);
+#endif
         /* If the surface was not written by the CPU we don't have to upload */
         if (!is_cpu_surface_dirty(d, s, &zeta_dma, DIRTY_MEMORY_NV2A_GPU_ZETA)) { return; }
+        /* Assertion to make sure we don't overwrite GPU results */
+        assert(s->draw_dirty == false);
     } else {
         /* If we didn't draw on it we don't have to redownload */
         if (!s->draw_dirty) { return; }
+#ifdef CACHE_DMA
+        zeta_dma = d->pgraph.dma_object_zeta;
+#else
+        zeta_dma = nv_dma_load(d, d->pgraph.dma_zeta);
+#endif
+        /* Assertion to make sure we don't overwrite CPU results */
+        assert(is_cpu_surface_dirty(d, s, &zeta_dma, DIRTY_MEMORY_NV2A_GPU_ZETA) == false);
     }
 
     /* Construct the GL format */
     bool has_stencil;
-    GLenum gl_type_stencil;
-    GLenum gl_type_depth;
-    unsigned int depth_offset;
-    unsigned int stencil_offset;
+    GLenum gl_format;
+    GLenum gl_type;
     unsigned int bytes_per_pixel;
     switch (s->format) {
     case NV097_SET_SURFACE_FORMAT_ZETA_Z16:
-        /* No Stencil */
         has_stencil = false;
-        /* 16 Bit Depth */
-        gl_type_depth = GL_UNSIGNED_SHORT;
-        depth_offset = 0;
-        /* = 16 Bit Total */
         bytes_per_pixel = 2;
+        gl_format = GL_DEPTH_COMPONENT;
+        gl_type = GL_UNSIGNED_SHORT;
+        break;
     case NV097_SET_SURFACE_FORMAT_ZETA_Z24S8:
-        bytes_per_pixel = 4;
-        /* 8 Bit Stencil */
         has_stencil = true;
-        gl_type_stencil = GL_UNSIGNED_BYTE;
-        stencil_offset = 0;
-        /* 24 Bit Depth */
-        gl_type_depth = GL_UNSIGNED_INT; /* FIXME: Must be handled using a converter? Actually want 24 bit integer! */
-        depth_offset = 0;
-        /* FIXME: Use these 2 variables to actually make things right?!
-            glGetDoublev(GL_DEPTH_BIAS,  &depth_bias);  // Returns 0.0
-             glGetDoublev(GL_DEPTH_SCALE, &depth_scale); // Returns 1.0
-        */
-        /* = 32 Bit Total */
         bytes_per_pixel = 4;
+        gl_format = GL_DEPTH_STENCIL;
+        gl_type = GL_UNSIGNED_INT_24_8; /* FIXME: Must be handled using a converter? Actually want 24 bit integer! */
         break;
     default:
         assert(false);
     }
-
+printf("s->format = 0x%x\n",s->format);
     /* Map surface into memory */
     hwaddr zeta_len;
     uint8_t *zeta_data = map_surface(d, s, &zeta_dma, &zeta_len);
 
-    /* Allow depth access, then perform the depth upload or download */
+    /* Allow zeta access, then perform the zeta upload or download */
     if (upload) {
         glDepthMask(GL_TRUE);
         //FIXME: Defer flag..
-    }
-    perform_surface_update(d, s, &zeta_dma, upload, zeta_data+depth_offset, GL_DEPTH_COMPONENT, gl_type_depth, bytes_per_pixel);
-    update_gl_depth_mask(&d->pgraph); //FIXME: Defer..
-
-    /* FIXME: Stencil done afterwards so we can possibly overwrite the higher bits of the depth read! Would that work? */
-    /* Allow stencil access, then perform the stencil upload or download */
-    if (has_stencil) {
-        if (upload) {
+        if (has_stencil) {
             glStencilMask(0xFF);
             //FIXME: Defer flag..
         }
-        perform_surface_update(d, s, &zeta_dma, upload, zeta_data+stencil_offset, GL_STENCIL_INDEX, gl_type_stencil, bytes_per_pixel);
-        update_gl_stencil_mask(&d->pgraph); //FIXME: Defer..
     }
+    perform_surface_update(d, s, &zeta_dma, upload, zeta_data, gl_format, gl_type, bytes_per_pixel);
+    update_gl_depth_mask(&d->pgraph); //FIXME: Defer..
+    update_gl_stencil_mask(&d->pgraph); //FIXME: Defer..
 
     /* Update dirty flags */
     if (!upload) {
@@ -2079,20 +2083,26 @@ static void pgraph_update_surface_zeta(NV2A_GPUState *d, bool upload)
     }
     /* Mark it as clean only for us, so changes dirty it again */
     mark_cpu_surface_clean(d, s, &zeta_dma, DIRTY_MEMORY_NV2A_GPU_ZETA);
-#endif
+
 }
 
 /* DO NOT USE THIS FUNCTION DIRECTLY! Use pgraph_update_surfaces instead! */
 static void pgraph_update_surface_color(NV2A_GPUState *d, bool upload)
 {
 
-    /* Early out if we have no surface, otherwise load DMA object */
+    DMAObject color_dma;
+
+    /* Early out if we have no surface */
     Surface* s = &d->pgraph.surface_color;
     if (s->format == 0) { return; }
-    DMAObject color_dma = nv_dma_load(d, d->pgraph.dma_color);
 
-    /* Check dirty flags */
+    /* Check dirty flags, load DMA object if necessary */
     if (upload) {
+#ifdef CACHE_DMA
+        color_dma = d->pgraph.dma_object_color;
+#else
+        color_dma = nv_dma_load(d, d->pgraph.dma_color);
+#endif
         /* If the surface was not written by the CPU we don't have to upload */
         if (!is_cpu_surface_dirty(d, s, &color_dma, DIRTY_MEMORY_NV2A_GPU_COLOR)) { return; }
         /* Assertion to make sure we don't overwrite GPU results */
@@ -2100,6 +2110,11 @@ static void pgraph_update_surface_color(NV2A_GPUState *d, bool upload)
     } else {
         /* If we didn't draw on it we don't have to redownload */
         if (!s->draw_dirty) { return; }
+#ifdef CACHE_DMA
+        color_dma = d->pgraph.dma_object_color;
+#else
+        color_dma = nv_dma_load(d, d->pgraph.dma_color);
+#endif
         /* Assertion to make sure we don't overwrite CPU results */
         assert(is_cpu_surface_dirty(d, s, &color_dma, DIRTY_MEMORY_NV2A_GPU_COLOR) == false);
     }
@@ -2153,14 +2168,23 @@ static inline void pgraph_update_surfaces(NV2A_GPUState *d, bool upload, bool ze
     if (!zeta && !color) {
         return;
     }
+
+    debugger_push_group("pgraph_update_surfaces(upload: %i, zeta: %i, color: %i)",upload,zeta,color);
+
     /* Sync dirty bits, then update surfaces [and sync dirty bits again(?)] */
     memory_region_sync_dirty_bitmap(d->vram);
     if (zeta) {
+      debugger_push_group("pgraph_update_surface_zeta");
       pgraph_update_surface_zeta(d, upload);
+      debugger_pop_group();
     }
     if (color) {
+      debugger_push_group("pgraph_update_surface_color");
       pgraph_update_surface_color(d, upload);
+      debugger_pop_group();
     }
+
+    debugger_pop_group();
 //    memory_region_sync_dirty_bitmap(d->vram); //FIXME: Is this necessary?
 }
 
@@ -2206,23 +2230,28 @@ static void pgraph_init(PGRAPHState *pg)
     glGenFramebuffersEXT(1, &pg->gl_framebuffer);
     glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, pg->gl_framebuffer);
 
-    glGenRenderbuffersEXT(1, &pg->gl_renderbuffer);
-    glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, pg->gl_renderbuffer);
+    glGenRenderbuffersEXT(1, &pg->gl_color_renderbuffer);
+    glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, pg->gl_color_renderbuffer);
     glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, GL_RGBA8,
                              FB_W, FB_H);
     glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,
                                  GL_COLOR_ATTACHMENT0_EXT,
                                  GL_RENDERBUFFER_EXT,
-                                 pg->gl_renderbuffer);
+                                 pg->gl_color_renderbuffer);
 
-    glGenRenderbuffersEXT(1, &pg->gl_depth_renderbuffer);
-    glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, pg->gl_depth_renderbuffer);
-    glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, GL_DEPTH_COMPONENT24,
+    glGenRenderbuffersEXT(1, &pg->gl_zeta_renderbuffer);
+    glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, pg->gl_zeta_renderbuffer);
+    glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, GL_DEPTH24_STENCIL8_EXT,
                              FB_W, FB_H);
     glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,
                                  GL_DEPTH_ATTACHMENT_EXT,
                                  GL_RENDERBUFFER_EXT,
-                                 pg->gl_depth_renderbuffer);
+                                 pg->gl_zeta_renderbuffer);
+    glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,
+                                 GL_STENCIL_ATTACHMENT_EXT,
+                                 GL_RENDERBUFFER_EXT,
+                                 pg->gl_zeta_renderbuffer);
+
 
 
     assert(glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT)
@@ -2264,8 +2293,8 @@ static void pgraph_destroy(PGRAPHState *pg)
 
     debugger_push_group("NV2A: pgraph_destroy");
 
-    glDeleteRenderbuffersEXT(1, &pg->gl_renderbuffer);
-    glDeleteRenderbuffersEXT(1, &pg->gl_depth_renderbuffer);
+    glDeleteRenderbuffersEXT(1, &pg->gl_color_renderbuffer);
+    glDeleteRenderbuffersEXT(1, &pg->gl_zeta_renderbuffer);
     glDeleteFramebuffersEXT(1, &pg->gl_framebuffer);
 
     for (i = 0; i < NV2A_GPU_MAX_TEXTURES; i++) {
@@ -2486,12 +2515,20 @@ static void pgraph_method(NV2A_GPUState *d,
         pgraph_update_surfaces(d, false, false, true);
 
         pg->dma_color = parameter;
+#ifdef CACHE_DMA
+        pg->dma_object_color = nv_dma_load(d, d->pgraph.dma_color);
+#endif
+printf("Set color dma object at 0x%x\n",parameter);
         break;
     case NV097_SET_CONTEXT_DMA_ZETA:
         /* try to get any straggling draws in before the surface's changed :/ */
         pgraph_update_surfaces(d, false, true, false);
 
         pg->dma_zeta = parameter;
+#ifdef CACHE_DMA
+        pg->dma_object_zeta = nv_dma_load(d, d->pgraph.dma_zeta);
+#endif
+printf("Set zeta dma object at 0x%x\n",parameter);
         break;
     case NV097_SET_CONTEXT_DMA_VERTEX_A:
         kelvin->dma_vertex_a = parameter;
@@ -2555,11 +2592,13 @@ static void pgraph_method(NV2A_GPUState *d,
     case NV097_SET_SURFACE_COLOR_OFFSET:
         pgraph_update_surfaces(d, false, false, true);
         debugger_message("NV2A: Changed COLOR_OFFSET to 0x%x\n",parameter);
+        printf("Modified color offset to 0x%x\n",parameter);
         pg->surface_color.offset = parameter;
         break;
     case NV097_SET_SURFACE_ZETA_OFFSET:
         pgraph_update_surfaces(d, false, true, false);
         debugger_message("NV2A: Changed ZETA_OFFSET to 0x%x\n",parameter);
+        printf("Modified zeta offset to 0x%x\n",parameter);
         pg->surface_zeta.offset = parameter;
         break;
 
@@ -2591,6 +2630,7 @@ static void pgraph_method(NV2A_GPUState *d,
         break;
     case NV097_SET_DEPTH_MASK:
         pg->depth_mask = parameter;
+        printf("Set depth mask to 0x%x\n",parameter);
         update_gl_depth_mask(pg);
         break;
 
@@ -3351,7 +3391,7 @@ glViewport(0, 0, w, h);
     default:
         NV2A_GPU_DPRINTF("    unhandled  (0x%02x 0x%08x)\n",
                      object->graphics_class, method);
-        debugger_message("NV2A: unhandled method in class 0x%02x: 0x%08x",
+        debugger_message("NV2A: unhandled method 0x%04x: 0x%04x",
                     object->graphics_class, 
                     method);
         break;
