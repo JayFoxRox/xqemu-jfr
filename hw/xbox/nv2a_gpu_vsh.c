@@ -879,71 +879,8 @@ QString* vsh_translate(uint16_t version,
 {
     QString *body = qstring_from_str("\n");
     QString *header = qstring_from_str(vsh_header);
-                          
+
 #ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
-    qstring_append(header,
-                   "\n"
-                   "/* Debug stuff */\n"
-                   "varying vec4 debug_v0;\n"
-                   "varying vec4 debug_v1;\n"
-                   "varying vec4 debug_v2;\n"
-                   "varying vec4 debug_v3;\n"
-                   "varying vec4 debug_v4;\n"
-                   "varying vec4 debug_v5;\n"
-                   "varying vec4 debug_v6;\n"
-                   "varying vec4 debug_v7;\n"
-                   "varying vec4 debug_v8;\n"
-                   "varying vec4 debug_v9;\n"
-                   "varying vec4 debug_v10;\n"
-                   "varying vec4 debug_v11;\n"
-                   "varying vec4 debug_v12;\n"
-                   "varying vec4 debug_v13;\n"
-                   "varying vec4 debug_v14;\n"
-                   "varying vec4 debug_v15;\n"
-                   "varying vec4 debug_oPos;\n"
-                   "varying vec4 debug_oD0;\n"
-                   "varying vec4 debug_oD1;\n"
-                   "varying vec4 debug_oB0;\n"
-                   "varying vec4 debug_oB1;\n"
-                   "varying vec4 debug_oPts;\n"
-                   "varying vec4 debug_oFog;\n"
-                   "varying vec4 debug_oT0;\n"
-                   "varying vec4 debug_oT1;\n"
-                   "varying vec4 debug_oT2;\n"
-                   "varying vec4 debug_oT3;\n"
-                   "\n"
-                   "#define DEBUG_VAR(slot,var) debug_ ## slot ## _ ## var = var;\n"
-                   "#define DEBUG(slot) \\\n"
-                   "  DEBUG_VAR(slot,R0) \\\n"
-                   "  DEBUG_VAR(slot,R1) \\\n"
-                   "  DEBUG_VAR(slot,R2) \\\n"
-                   "  DEBUG_VAR(slot,R3) \\\n"
-                   "  DEBUG_VAR(slot,R4) \\\n"
-                   "  DEBUG_VAR(slot,R5) \\\n"
-                   "  DEBUG_VAR(slot,R6) \\\n"
-                   "  DEBUG_VAR(slot,R7) \\\n"
-                   "  DEBUG_VAR(slot,R8) \\\n"
-                   "  DEBUG_VAR(slot,R9) \\\n"
-                   "  DEBUG_VAR(slot,R10) \\\n"
-                   "  DEBUG_VAR(slot,R11) \\\n"
-                   "  DEBUG_VAR(slot,R12)\n"
-                   "\n"
-                   "#define DEBUG_VARYING_VAR(slot,var) varying vec4 debug_ ## slot ## _ ## var;\n"
-                   "#define DEBUG_VARYING(slot) \\\n"
-                   "  DEBUG_VARYING_VAR(slot,R0) \\\n"
-                   "  DEBUG_VARYING_VAR(slot,R1) \\\n"
-                   "  DEBUG_VARYING_VAR(slot,R2) \\\n"
-                   "  DEBUG_VARYING_VAR(slot,R3) \\\n"
-                   "  DEBUG_VARYING_VAR(slot,R4) \\\n"
-                   "  DEBUG_VARYING_VAR(slot,R5) \\\n"
-                   "  DEBUG_VARYING_VAR(slot,R6) \\\n"
-                   "  DEBUG_VARYING_VAR(slot,R7) \\\n"
-                   "  DEBUG_VARYING_VAR(slot,R8) \\\n"
-                   "  DEBUG_VARYING_VAR(slot,R9) \\\n"
-                   "  DEBUG_VARYING_VAR(slot,R10) \\\n"
-                   "  DEBUG_VARYING_VAR(slot,R11) \\\n"
-                   "  DEBUG_VARYING_VAR(slot,R12)\n"
-                   "\n");
     qstring_append(body,
                    "  /* Debug input */\n"
                    "  debug_v0 = v0;\n"
@@ -968,18 +905,19 @@ QString* vsh_translate(uint16_t version,
 
     bool has_final = false;
     uint32_t *cur_token = tokens;
+    unsigned int slot;
     while (cur_token-tokens < tokens_length) {
-        unsigned int slot = (cur_token-tokens) / VSH_TOKEN_SIZE;
+        slot = (cur_token-tokens) / VSH_TOKEN_SIZE;
         QString *token_str = decode_token(cur_token);
         qstring_append_fmt(body,
-                           "  /* Slot %d: 0x%08X 0x%08X 0x%08X 0x%08X */\n",
+                           "  /* Slot %d: 0x%08X 0x%08X 0x%08X 0x%08X */",
                            slot,
                            cur_token[0],cur_token[1],cur_token[2],cur_token[3]);
-        qstring_append(body, qstring_get_str(token_str));
 #ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
-        qstring_append_fmt(header,"DEBUG_VARYING(%d)\n",slot);
-        qstring_append_fmt(body,"  DEBUG(%d)\n",slot);
+        qstring_append_fmt(body," DEBUG(%d)",slot);
 #endif
+        qstring_append(body, "\n");
+        qstring_append(body, qstring_get_str(token_str));
         qstring_append(body, "\n");
         QDECREF(token_str);
 
@@ -991,6 +929,73 @@ QString* vsh_translate(uint16_t version,
         cur_token += VSH_TOKEN_SIZE;
     }
     assert(has_final);
+
+#ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
+    qstring_append_fmt(header,
+                       "\n"
+                       "/* Debug stuff */\n"
+                       "varying vec4 debug_v0;\n"
+                       "varying vec4 debug_v1;\n"
+                       "varying vec4 debug_v2;\n"
+                       "varying vec4 debug_v3;\n"
+                       "varying vec4 debug_v4;\n"
+                       "varying vec4 debug_v5;\n"
+                       "varying vec4 debug_v6;\n"
+                       "varying vec4 debug_v7;\n"
+                       "varying vec4 debug_v8;\n"
+                       "varying vec4 debug_v9;\n"
+                       "varying vec4 debug_v10;\n"
+                       "varying vec4 debug_v11;\n"
+                       "varying vec4 debug_v12;\n"
+                       "varying vec4 debug_v13;\n"
+                       "varying vec4 debug_v14;\n"
+                       "varying vec4 debug_v15;\n"
+                       "\n"
+                       "varying vec4 debug_oPos;\n"
+                       "varying vec4 debug_oD0;\n"
+                       "varying vec4 debug_oD1;\n"
+                       "varying vec4 debug_oB0;\n"
+                       "varying vec4 debug_oB1;\n"
+                       "varying vec4 debug_oPts;\n"
+                       "varying vec4 debug_oFog;\n"
+                       "varying vec4 debug_oT0;\n"
+                       "varying vec4 debug_oT1;\n"
+                       "varying vec4 debug_oT2;\n"
+                       "varying vec4 debug_oT3;\n"
+                       "\n"
+                       "const int final_slot = %d;\n"
+                       "varying vec4 debug_R0[final_slot + 2];\n"
+                       "varying vec4 debug_R1[final_slot + 2];\n"
+                       "varying vec4 debug_R2[final_slot + 2];\n"
+                       "varying vec4 debug_R3[final_slot + 2];\n"
+                       "varying vec4 debug_R4[final_slot + 2];\n"
+                       "varying vec4 debug_R5[final_slot + 2];\n"
+                       "varying vec4 debug_R6[final_slot + 2];\n"
+                       "varying vec4 debug_R7[final_slot + 2];\n"
+                       "varying vec4 debug_R8[final_slot + 2];\n"
+                       "varying vec4 debug_R9[final_slot + 2];\n"
+                       "varying vec4 debug_R10[final_slot + 2];\n"
+                       "varying vec4 debug_R11[final_slot + 2];\n"
+                       "varying vec4 debug_R12[final_slot + 2];\n"
+                       "\n"
+                       "#define DEBUG_R(slot,variable,value) variable[slot] = value;\n"
+                       "#define DEBUG(slot) \\\n"
+                       "  DEBUG_R(slot,debug_R0,R0) \\\n"
+                       "  DEBUG_R(slot,debug_R1,R1) \\\n"
+                       "  DEBUG_R(slot,debug_R2,R2) \\\n"
+                       "  DEBUG_R(slot,debug_R3,R3) \\\n"
+                       "  DEBUG_R(slot,debug_R4,R4) \\\n"
+                       "  DEBUG_R(slot,debug_R5,R5) \\\n"
+                       "  DEBUG_R(slot,debug_R6,R6) \\\n"
+                       "  DEBUG_R(slot,debug_R7,R7) \\\n"
+                       "  DEBUG_R(slot,debug_R8,R8) \\\n"
+                       "  DEBUG_R(slot,debug_R9,R9) \\\n"
+                       "  DEBUG_R(slot,debug_R10,R10) \\\n"
+                       "  DEBUG_R(slot,debug_R11,R11) \\\n"
+                       "  DEBUG_R(slot,debug_R12,R12)\n"
+                       "\n",
+                       slot);
+#endif
 
     /* Note : Since we replaced oPos with r12 in the above decoding,
      * we have to assign oPos at the end; This can be done in two ways;
@@ -1015,6 +1020,9 @@ QString* vsh_translate(uint16_t version,
          * Same idea as above I think, but dono what the mvp stuff is about...
         */
 #ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
+        "  /* Debug final register states */\n"
+        "  DEBUG(final_slot + 1)\n"
+        "\n"
         "  /* Debug output */\n"
         "  debug_oPos = oPos;\n"
         "  debug_oD0 = oD0;\n"
