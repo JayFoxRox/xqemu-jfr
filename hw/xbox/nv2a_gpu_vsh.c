@@ -226,28 +226,6 @@ static const VshOpcodeParams mac_opcode_params[] = {
     /* MAC_ARL */ { true,  false, false },
 };
 
-
-#if 0
-static const char* mask_str[] = {
-            // xyzw xyzw
-    "",     // 0000 ____
-    ".waaa",   // 0001 ___w
-    ".zaaa",   // 0010 __z_
-    ".zwaa",  // 0011 __zw
-    ".yaaa",   // 0100 _y__
-    ".ywaa",  // 0101 _y_w
-    ".yzaa",  // 0110 _yz_
-    ".yzwa", // 0111 _yzw
-    ".xaaa",   // 1000 x___
-    ".xwaa",  // 1001 x__w
-    ".xzaa",  // 1010 x_z_
-    ".xzwa", // 1011 x_zw
-    ".xyaa",  // 1100 xy__
-    ".xywa", // 1101 xy_w
-    ".xyza", // 1110 xyz_
-    ""//.xyzw  1111 xyzw
-};
-#else
 static const char* mask_str[] = {
             // xyzw xyzw
     "",     // 0000 ____
@@ -267,9 +245,7 @@ static const char* mask_str[] = {
     ".xyz", // 1110 xyz_
     ".xyzw" // 1111 xyzw
 };
-#endif
 
-/* Note: OpenGL seems to be case-sensitive, and requires upper-case opcodes! */
 static const char* mac_opcode[] = {
     "NOP",
     "MOV",
@@ -596,19 +572,28 @@ static QString* decode_token(uint32_t *shader_token)
     return ret;
 }
 
-/* Vertex shader header, mapping Xbox1 registers to the ARB syntax (original
- * version by KingOfC). Note about the use of 'conventional' attributes in here:
- * Since we prefer to use only one shader for both immediate and deferred mode
- * rendering, we alias all attributes to conventional inputs as much as possible.
- * Only when there's no conventional attribute available, we use generic
- * attributes. So in the following header, we use conventional attributes first,
- * and generic attributes for the rest of the vertex attribute slots. This makes
- * it possible to support immediate and deferred mode rendering with the same
- * shader, and the use of the OpenGL fixed-function pipeline without a shader.
- */
 static const char* vsh_header =
     "#version 110\n"
     "\n"
+    "attribute vec4 v0;\n"
+    "attribute vec4 v1;\n"
+    "attribute vec4 v2;\n"
+    "attribute vec4 v3;\n"
+    "attribute vec4 v4;\n"
+    "attribute vec4 v5;\n"
+    "attribute vec4 v6;\n"
+    "attribute vec4 v7;\n"
+    "attribute vec4 v8;\n"
+    "attribute vec4 v9;\n"
+    "attribute vec4 v10;\n"
+    "attribute vec4 v11;\n"
+    "attribute vec4 v12;\n"
+    "attribute vec4 v13;\n"
+    "attribute vec4 v14;\n"
+    "attribute vec4 v15;\n"
+    "\n"
+    //FIXME: What is a0 initialized as?
+    "int A0 = 0;\n"
     //FIXME: I just assumed this is true for all registers?!
     "vec4 R0 = vec4(0.0,0.0,0.0,1.0);\n"
     "vec4 R1 = vec4(0.0,0.0,0.0,1.0);\n"
@@ -624,57 +609,6 @@ static const char* vsh_header =
     "vec4 R11 = vec4(0.0,0.0,0.0,1.0);\n"
     "vec4 R12 = vec4(0.0,0.0,0.0,1.0);\n"
     "\n"
-    //FIXME: What is a0 initialized as?
-    "int A0 = 0;\n"
-    "\n"
-#if 0
-    "ATTRIB v0 = vertex.position;" // (See "conventional" note above)
-    "ATTRIB v1 = vertex.%s;" // Note : We replace this with "weight" or "attrib[1]" depending GL_ARB_vertex_blend
-    "ATTRIB v2 = vertex.normal;"
-    "ATTRIB v3 = vertex.color.primary;"
-    "ATTRIB v4 = vertex.color.secondary;"
-    "ATTRIB v5 = vertex.fogcoord;"
-    "ATTRIB v6 = vertex.attrib[6];"
-    "ATTRIB v7 = vertex.attrib[7];"
-    "ATTRIB v8 = vertex.texcoord[0];"
-    "ATTRIB v9 = vertex.texcoord[1];"
-    "ATTRIB v10 = vertex.texcoord[2];"
-    "ATTRIB v11 = vertex.texcoord[3];"
-#else
-    "attribute vec4 v0;\n"
-    "attribute vec4 v1;\n"
-    "attribute vec4 v2;\n"
-    "attribute vec4 v3;\n"
-    "attribute vec4 v4;\n"
-    "attribute vec4 v5;\n"
-    "attribute vec4 v6;\n"
-    "attribute vec4 v7;\n"
-    "attribute vec4 v8;\n"
-    "attribute vec4 v9;\n"
-    "attribute vec4 v10;\n"
-    "attribute vec4 v11;\n"
-#endif
-    "attribute vec4 v12;\n"
-    "attribute vec4 v13;\n"
-    "attribute vec4 v14;\n"
-    "attribute vec4 v15;\n"
-
-    "\n"
-
-/*
-//FIXME: temp var?
-    "OUTPUT oPos = result.position;\n"
-    "OUTPUT oD0 = result.color.front.primary;\n"
-    "OUTPUT oD1 = result.color.front.secondary;\n"
-    "OUTPUT oB0 = result.color.back.primary;\n"
-    "OUTPUT oB1 = result.color.back.secondary;\n"
-    "OUTPUT oPts = result.pointsize;\n"
-    "OUTPUT oFog = result.fogcoord;\n"
-    "OUTPUT oT0 = result.texcoord[0];\n"
-    "OUTPUT oT1 = result.texcoord[1];\n"
-    "OUTPUT oT2 = result.texcoord[2];\n"
-    "OUTPUT oT3 = result.texcoord[3];\n"
-*/
     "#define oPos R12 /* oPos is a mirror of R12 */\n"
     "vec4 oD0 = vec4(0.0,0.0,0.0,1.0);\n"
     "vec4 oD1 = vec4(0.0,0.0,0.0,1.0);\n"
@@ -686,23 +620,14 @@ static const char* vsh_header =
     "vec4 oT1 = vec4(0.0,0.0,0.0,1.0);\n"
     "vec4 oT2 = vec4(0.0,0.0,0.0,1.0);\n"
     "vec4 oT3 = vec4(0.0,0.0,0.0,1.0);\n"
-
     "\n"
 
     /* All constants in 1 array declaration */
-//FIXME: it's probably wise to change the c[x] to c##x later because it forces us to allocate and reupload around 100*4*4 bytes (~1.5kB) of useless data on/to the GPU :P
-   "uniform vec4 c[192];\n"
-   "#define viewport_scale c[58] /* This seems to be hardwired? See comment in nv2a_gpu.c */\n"
-   "#define viewport_offset c[59] /* Same as above */\n"
-   "uniform vec2 cliprange;\n"
+    "uniform vec4 c[192];\n"
+    "#define viewport_scale c[58] /* This seems to be hardwired? See comment in nv2a_gpu.c */\n"
+    "#define viewport_offset c[59] /* Same as above */\n"
+    "uniform vec2 cliprange;\n"
 
-/*
-
-*/
-
-// Code from pages linked here http://msdn.microsoft.com/en-us/library/windows/desktop/bb174703%28v=vs.85%29.aspx
-// and also https://www.opengl.org/registry/specs/NV/vertex_program1_1.txt
-// Some code was also written from scratch because it seemed easy - if you are bored verify the behaviour!
     "\n"
     /* Oh boy.. Let's hope these are optimized away! */
     "/* Converts number of components of rvalue to lvalue */\n"
@@ -714,13 +639,18 @@ static const char* vsh_header =
 #ifdef NICE_CODE
     "/* Converts the input to vec4, pads with last component */\n"
     "vec4 _in(float v) { return vec4(v); }\n"
-    "vec4 _in(vec2 v) { return vec4(v.xy,v.y,v.y); }\n"
-    "vec4 _in(vec3 v) { return vec4(v.xyz,v.z); }\n"
-    "vec4 _in(vec4 v) { return v; }\n"
+    "vec4 _in(vec2 v) { return v.xyyy; }\n"
+    "vec4 _in(vec3 v) { return v.xyzz; }\n"
+    "vec4 _in(vec4 v) { return v.xyzw; }\n"
 #else
     "/* Make sure input is always a vec4 */\n"
     "#define _in(v) vec4(v)\n"
 #endif
+
+    /* Code from pages linked here http://msdn.microsoft.com/en-us/library/windows/desktop/bb174703%28v=vs.85%29.aspx
+     * and also https://www.opengl.org/registry/specs/NV/vertex_program1_1.txt
+     * Some code was also written from scratch because it seemed easy - if you are bored verify the behaviour! */
+
     "\n"
     "#define MOV(dest, src) dest = _out(dest,_MOV(_in(src)))\n"
     "vec4 _MOV(vec4 src)\n" 
@@ -907,7 +837,6 @@ QString* vsh_translate(uint16_t version,
         QDECREF(token_str);
 
         if (vsh_get_field(cur_token, FLD_FINAL)) {
-            printf("Final at %u\n",slot);
             has_final = true;
             break;
         }
@@ -918,7 +847,7 @@ QString* vsh_translate(uint16_t version,
 #ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
     qstring_append_fmt(header,
                        "\n"
-                       "/* Debug stuff */\n"
+                       "/* Debug input state */\n"
                        "varying vec4 debug_v0;\n"
                        "varying vec4 debug_v1;\n"
                        "varying vec4 debug_v2;\n"
@@ -936,19 +865,9 @@ QString* vsh_translate(uint16_t version,
                        "varying vec4 debug_v14;\n"
                        "varying vec4 debug_v15;\n"
                        "\n"
-                       "varying vec4 debug_oPos;\n"
-                       "varying vec4 debug_oD0;\n"
-                       "varying vec4 debug_oD1;\n"
-                       "varying vec4 debug_oB0;\n"
-                       "varying vec4 debug_oB1;\n"
-                       "varying vec4 debug_oPts;\n"
-                       "varying vec4 debug_oFog;\n"
-                       "varying vec4 debug_oT0;\n"
-                       "varying vec4 debug_oT1;\n"
-                       "varying vec4 debug_oT2;\n"
-                       "varying vec4 debug_oT3;\n"
-                       "\n"
+                       "/* Debug register state */\n"
                        "const int final_slot = %d;\n"
+                       //FIXME: What about A0? Querying an int instead of vec4 would require different GL code..
                        "varying vec4 debug_R0[final_slot + 2];\n"
                        "varying vec4 debug_R1[final_slot + 2];\n"
                        "varying vec4 debug_R2[final_slot + 2];\n"
@@ -963,6 +882,20 @@ QString* vsh_translate(uint16_t version,
                        "varying vec4 debug_R11[final_slot + 2];\n"
                        "varying vec4 debug_R12[final_slot + 2];\n"
                        "\n"
+                       "/* Debug output state */\n"
+                       "varying vec4 debug_oPos;\n"
+                       "varying vec4 debug_oD0;\n"
+                       "varying vec4 debug_oD1;\n"
+                       "varying vec4 debug_oB0;\n"
+                       "varying vec4 debug_oB1;\n"
+                       "varying vec4 debug_oPts;\n"
+                       "varying vec4 debug_oFog;\n"
+                       "varying vec4 debug_oT0;\n"
+                       "varying vec4 debug_oT1;\n"
+                       "varying vec4 debug_oT2;\n"
+                       "varying vec4 debug_oT3;\n"
+                       "\n"
+                       "/* Routine to output debug register state */\n"
                        "#define DEBUG_R(slot,variable,value) variable[slot] = value;\n"
                        "#define DEBUG(slot) \\\n"
                        "  DEBUG_R(slot,debug_R0,R0) \\\n"
@@ -982,21 +915,7 @@ QString* vsh_translate(uint16_t version,
                        slot);
 #endif
 
-    /* Note : Since we replaced oPos with r12 in the above decoding,
-     * we have to assign oPos at the end; This can be done in two ways;
-     * 1) When the shader is complete (including transformations),
-     *    we could just do a 'MOV oPos, R12;' and be done with it.
-     */
     qstring_append(body,
-/*
-    '# Dxbx addition : Transform the vertex to clip coordinates :'
-    "DP4 R0.x, mvp[0], R12;"
-    "DP4 R0.y, mvp[1], R12;"
-    "DP4 R0.z, mvp[2], R12;"
-    "DP4 R0.w, mvp[3], R12;"
-    "MOV R12, R0;"
-*/
-
 
         /* the shaders leave the result in screen space, while
          * opengl expects it in clip coordinates.
@@ -1022,7 +941,6 @@ QString* vsh_translate(uint16_t version,
         "  debug_oT3 = oT3;\n"
         "\n"
 #endif
-#if 1
         "  /* Un-screenspace transform */\n"
         "  R12.xyz = R12.xyz - viewport_offset.xyz;\n"
         "  vec3 tmp = vec3(1.0);\n"
@@ -1039,22 +957,6 @@ QString* vsh_translate(uint16_t version,
         "  R12.w = 1.0;\n" //This breaks 2D? Maybe w is zero?
 #endif
         "\n"
-#else
-//FIXME: Use surface width / height / zeta max
-      "R12.z /= 16777215.0;\n" // Z[0;1]
-      "R12.z *= (cliprange.y - cliprange.x) / 16777215.0;\n" // Scale so [0;zmax] -> [0;cliprange_size]
-      "R12.z -= cliprange.x / 16777215.0;\n" // Move down so [clipmin_min;clipmin_max]
-      // X = [0;surface_width]; Y = [surface_height;0]; Z = [0;1]; W = ???
-      "R12.xyz = R12.xyz / vec3(640.0,480.0,1.0);\n"
-      // X,Z = [0;1]; Y = [1;0]; W = ???
-      "R12.xyz = R12.xyz * vec3(2.0) - vec3(1.0);\n"
-      "R12.y *= -1.0;\n"
-      "R12.w = 1.0;\n"
-      // X,Y,Z = [-1;+1]; W = 1
-        "\n"
-#endif
-        /* undo the perspective divide? */
-        //"MUL R12.xyz, R12, R12.w;\n"
 
         /* Z coord [0;1]->[-1;1] mapping, see comment in transform_projection
          * in state.c
@@ -1067,6 +969,7 @@ QString* vsh_translate(uint16_t version,
         //"# Apply Z coord mapping\n"
         //"ADD R12.z, R12.z, R12.z;\n"
         //"ADD R12.z, R12.z, -R12.w;\n"
+
         "  /* Set outputs */\n"
         "  gl_Position = oPos;\n"
         "  gl_FrontColor = oD0;\n"
@@ -1079,8 +982,7 @@ QString* vsh_translate(uint16_t version,
         "  gl_TexCoord[1] = oT1;\n"
         "  gl_TexCoord[2] = oT2;\n"
         "  gl_TexCoord[3] = oT3;\n"
-        "\n"
-    );
+        "\n");
 
     QString *ret = qstring_new();
     qstring_append(ret, qstring_get_str(header));

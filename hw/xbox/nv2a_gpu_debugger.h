@@ -1,3 +1,5 @@
+static unsigned int debugger_frame = 1;
+
 static void debugger_message(const char* fmt, ...) {
     char buffer[512];
     va_list args;
@@ -36,6 +38,7 @@ static void debugger_finish_frame(void) {
     if (imported_glFrameTerminatorGREMEDY) {
         imported_glFrameTerminatorGREMEDY();
     }
+    debugger_frame++;
 }
 
 #if 0

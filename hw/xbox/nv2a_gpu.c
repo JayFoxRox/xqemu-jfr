@@ -51,15 +51,15 @@ const char** feedback[] = {
     [0] = { "debug_v0" },
     // Program 31 [dolphin/seafloor.xvs]
     [31] = { "debug_v0",
-             "debug_0_R12",
-             "debug_1_R12",
-             "debug_2_R12",
-             "debug_3_R12",
-             "debug_4_R12",
-             "debug_5_R12",
-             "debug_6_R12",
-             "debug_7_R12",
-             "debug_8_R12",
+             "debug_R12[0]",
+             "debug_R12[1]",
+             "debug_R12[2]",
+             "debug_R12[3]",
+             "debug_R12[4]",
+             "debug_R12[5]",
+             "debug_R12[6]",
+             "debug_R12[7]",
+             "debug_R12[8]",
              "debug_oPos" }
 };
 #   define VERTEX_START 0
@@ -542,6 +542,8 @@ typedef struct PGRAPHState {
     unsigned int clip_width, clip_height;
     uint32_t color_mask;
     bool depth_mask;
+
+    uint32_t fog_color;
 
     hwaddr dma_a, dma_b;
     Texture textures[NV2A_GPU_MAX_TEXTURES];
@@ -1576,6 +1578,7 @@ static GLuint generate_shaders(PGRAPHState* pg, KelvinState* kelvin, ShaderState
     if (!compiled) {
         GLchar log[1024];
         glGetShaderInfoLog(fragment_shader, 1024, NULL, log);
+        fprintf(stderr, "\n\n%s\n", fragment_shader_code_str);
         fprintf(stderr, "nv2a: fragment shader compilation failed: %s\n", log);
         abort();
     }
@@ -1935,6 +1938,22 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
                            rowl*bytes_per_pixel,
                            bytes_per_pixel);
         }
+
+#if 0
+        /* FIXME: Also do this if we the CPU wasn't dirty! */
+        /* Attempt to keep the unused buffer area clean */
+        if (gl_format == GL_DEPTH_STENCIL) {
+            glClearStencil(0x777777);
+            glClear(GL_STENCIL_BUFFER_BIT);
+        }
+        if ((gl_format == GL_DEPTH_COMPONENT) || (gl_format == GL_DEPTH_STENCIL)) {
+            glClearDepth(0.5f);
+            glClear(GL_DEPTH_BUFFER_BIT);
+        } else {
+            glClearColor(1.0f,0.0f,1.0f,0.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+        }
+#endif
 
         glWindowPos2i(0, d->pgraph.clip_height);
         glPixelZoom(1, -1);
@@ -2715,7 +2734,7 @@ printf("Set zeta dma object at 0x%x\n",parameter);
             NV097_SET_VIEWPORT_SCALE + 12:
 
         slot = (class_method - NV097_SET_VIEWPORT_SCALE) / 4;
-
+        printf("SET_VIEWPORT_SCALE\n");
         //FIXME: Why is this happening? Same as NV097_SET_VIEWPORT_OFFSET!
         kelvin->constants[58].data[slot] = parameter;
         kelvin->constants[58].dirty = true;
@@ -2741,6 +2760,9 @@ printf("Set zeta dma object at 0x%x\n",parameter);
         //printf("Setting c[%i].%i (c%i) = %f\n",kelvin->constant_load_slot/4,kelvin->constant_load_slot%4,kelvin->constant_load_slot/4-96,*(float*)&parameter);
         assert((kelvin->constant_load_slot/4) < NV2A_GPU_VERTEXSHADER_CONSTANTS);
         constant = &kelvin->constants[kelvin->constant_load_slot/4];
+        if ((kelvin->constant_load_slot/4) == 58) {
+            printf("SET_TRANSFORM_CONSTANT viewport_scale\n");
+        }
         constant->data[kelvin->constant_load_slot%4] = parameter;
         kelvin->constant_load_slot++;
         constant->dirty = true;
@@ -2883,12 +2905,33 @@ assert(pg->clip_x == 0);
 assert(pg->clip_y == 0);
 int w = pg->clip_width;
 int h =  pg->clip_height;
-#if 0 //FIXME: !!!! Hack because some viewport stuff is wrong and I want to see what I render until the issue is solved..
-if (w > 640) { w = 640; }
-if (w > 480) { w = 480; }
-#endif
 //FIXME: Probably do this elsewhere..?
+// Compensate HW supersampling
+switch (pg->surface_anti_aliasing) {
+case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_1:
+    //FIXME: Turn off hw supersampling?!
+    break;
+case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_CORNER_2:
+    w /= 2;
+    //FIXME: Turn on hw supersampling?!
+    break;
+case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_SQUARE_OFFSET_4:
+    w /= 2;
+    h /= 2;
+    //FIXME: Turn on hw supersampling?!
+    break;
+default:
+    assert(0);
+}
 glViewport(0, 0, w, h);
+static unsigned int draw_call = 0;
+draw_call++;
+printf("%i \t%i: \tClip %ix%i \tVP scale: %fx%f\tAnti alias: %i, Pipeline: %s\n",
+       debugger_frame, draw_call,
+       pg->clip_width,pg->clip_height,
+       *(float*)&constant[58].data[0],*(float*)&constant[58].data[1],
+       pg->surface_anti_aliasing,
+       GET_MASK(pg->regs[NV_PGRAPH_CSV0_D],NV_PGRAPH_CSV0_D_MODE)?"VSH":"FFP");
 
             pgraph_bind_shaders(pg, kelvin);
 
@@ -3272,6 +3315,17 @@ glViewport(0, 0, w, h);
         slot = (class_method - NV097_SET_SPECULAR_FOG_FACTOR) / 4;
         pg->regs[NV_PGRAPH_SPECFOGFACTOR0 + slot*4] = parameter;
         pg->shaders_dirty = true;
+        break;
+
+    case NV097_SET_FOG_COLOR:
+        pg->fog_color = parameter;
+        GLfloat gl_fog[] = {
+            (pg->fog_color & 0xFF) / 255.0f,
+            ((pg->fog_color >> 8) & 0xFF) / 255.0f,
+            ((pg->fog_color >> 16) & 0xFF) / 255.0f,
+            ((pg->fog_color >> 24) & 0xFF) / 255.0f
+        };
+        glFogfv(GL_FOG_COLOR,gl_fog);
         break;
 
     case NV097_SET_COMBINER_COLOR_OCW ...

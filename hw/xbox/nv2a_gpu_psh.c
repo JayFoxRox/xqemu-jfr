@@ -44,6 +44,8 @@
  * https://www.opengl.org/registry/specs/NV/register_combiners.txt
  */
 
+#define FINAL_STAGE 8
+
 
 enum PS_TEXTUREMODES
 {                                 // valid in stage 0 1 2 3
@@ -157,6 +159,25 @@ enum PS_FINALCOMBINERSETTING
     PS_FINALCOMBINERSETTING_COMPLEMENT_R0= 0x20, // unsigned invert mapping
 };
 
+#define PRETTY_CODE
+
+const char* str_zero = "0.0";
+const char* str_half = "0.5";
+const char* str_one = "1.0";
+
+static inline QString* pretty_operation(QString* x, const char* zero, const char* half, const char* one, const char* any) {
+    const char* str_x = qstring_get_str(x);
+#ifdef PRETTY_CODE
+    if ((zero != NULL) && !strcmp(str_x,str_zero)) {
+        return qstring_from_str(zero);
+    } else if ((half != NULL) && !strcmp(str_x,str_half)) {
+        return qstring_from_str(half);
+    } else if ((one != NULL) && !strcmp(str_x,str_one)) {
+        return qstring_from_str(one);
+    }
+#endif
+    return qstring_from_fmt(any, str_x);
+}
 
 
 // Structures to describe the PS definition
@@ -232,12 +253,26 @@ static void add_const_ref(struct PixelShader *ps, const char *var)
 // Get the code for a variable used in the program
 static QString* get_var(struct PixelShader *ps, int reg, bool is_dest)
 {
+
+    const char* str_r0;
+    const char* str_v1;
+    if ((ps->cur_stage == FINAL_STAGE) && ps->final_input.inv_r0) {
+      str_r0 = "(1.0 - r0)";
+    } else {
+      str_r0 = "r0";
+    }
+    if ((ps->cur_stage == FINAL_STAGE) && ps->final_input.inv_v1) {
+      str_v1 = "(1.0 - v1)";
+    } else {
+      str_v1 = "v1";
+    }
+
     switch (reg) {
     case PS_REGISTER_DISCARD:
         if (is_dest) {
             return qstring_from_str("");
         } else {
-            return qstring_from_str("0.0");
+            return qstring_from_str(str_zero);
         }
         break;
     case PS_REGISTER_C0:
@@ -273,9 +308,8 @@ static QString* get_var(struct PixelShader *ps, int reg, bool is_dest)
             return qstring_from_str("c_0_1");
         }
         break;
-    case PS_REGISTER_FOG: // TODO
-        //return qstring_from_str("fog");
-        return qstring_from_str("vec4(1.0)");
+    case PS_REGISTER_FOG: //TODO
+        return qstring_from_str("fog");
     case PS_REGISTER_V0:
         return qstring_from_str("v0");
     case PS_REGISTER_V1:
@@ -290,13 +324,17 @@ static QString* get_var(struct PixelShader *ps, int reg, bool is_dest)
         return qstring_from_str("t3");
     case PS_REGISTER_R0:
         add_var_ref(ps, "r0");
-        return qstring_from_str("r0");
+        return qstring_from_str(str_r0);
     case PS_REGISTER_R1:
         add_var_ref(ps, "r1");
         return qstring_from_str("r1");
     case PS_REGISTER_V1R0_SUM:
         add_var_ref(ps, "r0");
-        return qstring_from_str("(v1 + r0)");
+        if ((ps->cur_stage == FINAL_STAGE) && ps->final_input.clamp_sum) {
+            return qstring_from_fmt("clamp(%s + %s, 0.0, 1.0)",str_v1,str_r0);
+        } else {
+            return qstring_from_fmt("(%s + %s)",str_v1,str_r0);
+        }
     case PS_REGISTER_EF_PROD:
         return qstring_from_fmt("(%s * %s)", qstring_get_str(ps->varE),
                                 qstring_get_str(ps->varF));
@@ -311,7 +349,7 @@ static QString* get_input_var(struct PixelShader *ps, struct InputInfo in, bool 
 {
     QString *reg = get_var(ps, in.reg, false);
 
-    if (strcmp(qstring_get_str(reg), "0.0") != 0
+    if (strcmp(qstring_get_str(reg), str_zero) != 0
         && (in.reg != PS_REGISTER_EF_PROD
             || strstr(qstring_get_str(reg), ".a") == NULL)) {
         switch (in.chan) {
@@ -333,25 +371,51 @@ static QString* get_input_var(struct PixelShader *ps, struct InputInfo in, bool 
 
     QString *res;
     switch (in.mod) {
-    case PS_INPUTMAPPING_SIGNED_IDENTITY:
     case PS_INPUTMAPPING_UNSIGNED_IDENTITY:
-        QINCREF(reg);
-        res = reg;
+        res = pretty_operation(reg,
+                               str_zero, /* "0.0" = 0.0 */
+                               str_half, /* "0.5" = 0.5 */
+                               str_one,  /* "1.0" = 1.0 */
+                               "max(%s, 0.0)");
         break;
     case PS_INPUTMAPPING_UNSIGNED_INVERT:
-        res = qstring_from_fmt("(1.0 - %s)", qstring_get_str(reg));
+        res = pretty_operation(reg,
+                               str_one,  /* "1.0 - 0.0" = 1.0 */
+                               str_half, /* "1.0 - 0.5" = 0.5 */
+                               str_zero, /* "1.0 - 1.0" = 0.0 */
+                               "(1.0 - max(%s, 0.0))");
         break;
-    case PS_INPUTMAPPING_EXPAND_NORMAL: // TODO: Change to max(0, x)??
-        res = qstring_from_fmt("(2.0 * %s - 1.0)", qstring_get_str(reg));
+    case PS_INPUTMAPPING_EXPAND_NORMAL:
+        res = pretty_operation(reg,
+                               NULL,     /* "2.0 * 0.0 - 1.0" = -1.0 */
+                               str_zero, /* "2.0 * 0.5 - 1.0" = 0.0 */
+                               str_one,  /* "2.0 * 1.0 - 1.0" = 1.0 */
+                               "(2.0 * max(%s, 0.0) - 1.0)");
         break;
     case PS_INPUTMAPPING_EXPAND_NEGATE:
-        res = qstring_from_fmt("(1.0 - 2.0 * %s)", qstring_get_str(reg));
+        res = pretty_operation(reg,
+                               str_one,  /* "1.0 - 2.0 * 0.0" = 1.0 */
+                               str_zero, /* "1.0 - 2.0 * 0.5" = 0.0 */
+                               NULL,     /* "1.0 - 2.0 * 1.0" = -1.0 */
+                               "(1.0 - 2.0 * max(%s, 0.0)");
         break;
     case PS_INPUTMAPPING_HALFBIAS_NORMAL:
-        res = qstring_from_fmt("(%s - 0.5)", qstring_get_str(reg));
+        res = pretty_operation(reg,
+                               NULL,     /* "0.0 - 0.5" = -0.5 */
+                               str_zero, /* "0.5 - 0.5" = 0.0 */
+                               str_half, /* "1.0 - 0.5" = 0.5 */
+                               "(max(%s, 0.0) - 0.5)");
         break;
     case PS_INPUTMAPPING_HALFBIAS_NEGATE:
-        res = qstring_from_fmt("(0.5 - %s)", qstring_get_str(reg));
+        res = pretty_operation(reg,
+                               str_half, /* "0.5 - 0.0" = 0.5 */
+                               str_zero, /* "0.5 - 0.5" = 0.0 */
+                               NULL,     /* "0.5 - 1.0" = -0.5 */
+                               "(0.5 - max(%s, 0.0))");
+        break;
+    case PS_INPUTMAPPING_SIGNED_IDENTITY:
+        QINCREF(reg);
+        res = reg;
         break;
     case PS_INPUTMAPPING_SIGNED_NEGATE:
         res = qstring_from_fmt("-%s", qstring_get_str(reg));
@@ -375,19 +439,39 @@ static QString* get_output(QString *reg, int mapping)
         res = reg;
         break;
     case PS_COMBINEROUTPUT_BIAS:
-        res = qstring_from_fmt("(%s - 0.5)", qstring_get_str(reg));
+        res = pretty_operation(reg,
+                               NULL,     /* "0.0 - 0.5" = -0.5 */
+                               str_zero, /* "0.5 - 0.5" = 0.0 */
+                               str_half, /* "1.0 - 0.5" = 0.5 */
+                               "(%s - 0.5)");
         break;
     case PS_COMBINEROUTPUT_SHIFTLEFT_1:
-        res = qstring_from_fmt("(%s * 2.0)", qstring_get_str(reg));
+        res = pretty_operation(reg,
+                               str_zero, /* "0.0 * 2.0" = 0.0 */
+                               str_one,  /* "0.5 * 2.0" = 1.0 */
+                               NULL,     /* "1.0 * 2.0" = 2.0 */
+                               "(%s * 2.0)");
         break;
     case PS_COMBINEROUTPUT_SHIFTLEFT_1_BIAS:
-        res = qstring_from_fmt("((%s - 0.5) * 2.0)", qstring_get_str(reg));
+        res = pretty_operation(reg,
+                               NULL,     /* "(0.0 - 0.5) * 2.0" = -1.0 */
+                               str_zero, /* "(0.5 - 0.5) * 2.0" = 0.0 */
+                               str_one,  /* "(1.0 - 0.5) * 2.0" = 1.0 */
+                               "((%s - 0.5) * 2.0)");
         break;
     case PS_COMBINEROUTPUT_SHIFTLEFT_2:
-        res = qstring_from_fmt("(%s * 4.0)", qstring_get_str(reg));
+        res = pretty_operation(reg,
+                               str_zero, /* "0.0 * 4.0" = 0.0 */
+                               NULL,     /* "0.5 * 4.0" = 2.0 */
+                               NULL,     /* "1.0 * 4.0" = 4.0 */
+                               "(%s * 4.0)");
         break;
     case PS_COMBINEROUTPUT_SHIFTRIGHT_1:
-        res = qstring_from_fmt("(%s / 2.0)", qstring_get_str(reg));
+        res = pretty_operation(reg,
+                               str_zero, /* "0.0 / 2.0" = 0.0 */
+                               NULL, /* "0.5 / 2.0" = 0.25 */
+                               str_half, /* "1.0 / 2.0" = 0.5 */
+                               "(%s / 2.0)");
         break;
     default:
         assert(false);
@@ -416,8 +500,19 @@ static void add_stage_code(struct PixelShader *ps,
         ab = qstring_from_fmt("dot(%s, %s)",
                               qstring_get_str(a), qstring_get_str(b));
     } else {
-        ab = qstring_from_fmt("(%s * %s)",
-                              qstring_get_str(a), qstring_get_str(b));
+        if (!strcmp(qstring_get_str(a), str_zero) || /* "0.0 * b = 0.0" */
+            !strcmp(qstring_get_str(b), str_zero)) { /* "a * 0.0 = 0.0" */
+            ab = qstring_from_str(str_zero);
+        } else if (!strcmp(qstring_get_str(a), str_one)) { /* "1.0 * b" = b */
+            QINCREF(b);
+            ab = b;
+        } else if (!strcmp(qstring_get_str(b), str_one)) { /* "a * 1.0" = a */
+            QINCREF(a);
+            ab = a;
+        } else {
+            ab = qstring_from_fmt("(%s * %s)",
+                                  qstring_get_str(a), qstring_get_str(b));
+        }
     }
 
     QString *cd;
@@ -425,8 +520,19 @@ static void add_stage_code(struct PixelShader *ps,
         cd = qstring_from_fmt("dot(%s, %s)",
                               qstring_get_str(c), qstring_get_str(d));
     } else {
-        cd = qstring_from_fmt("(%s * %s)",
-                              qstring_get_str(c), qstring_get_str(d));
+        if (!strcmp(qstring_get_str(c), str_zero) || /* "0.0 * d = 0.0" */
+            !strcmp(qstring_get_str(d), str_zero)) { /* "c * 0.0 = 0.0" */
+            cd = qstring_from_str(str_zero);
+        } else if (!strcmp(qstring_get_str(c), str_one)) { /* "1.0 * d" = d */
+            QINCREF(d);
+            cd = d;
+        } else if (!strcmp(qstring_get_str(d), str_one)) { /* "c * 1.0" = c */
+            QINCREF(c);
+            cd = c;
+        } else {
+            cd = qstring_from_fmt("(%s * %s)",
+                                  qstring_get_str(c), qstring_get_str(d));
+        }
     }
 
     QString *ab_mapping = get_output(ab, output.mapping);
@@ -462,7 +568,19 @@ static void add_stage_code(struct PixelShader *ps,
 
     QString *sum;
     if (output.muxsum_op == PS_COMBINEROUTPUT_AB_CD_SUM) {
-        sum = qstring_from_fmt("(%s + %s)", qstring_get_str(ab), qstring_get_str(cd));
+        if (!strcmp(qstring_get_str(ab), str_half) && /* "0.5 + 0.5" = 1.0 */
+            !strcmp(qstring_get_str(cd), str_half)) {
+            sum = qstring_from_str(str_one);
+        } else if (!strcmp(qstring_get_str(ab), str_zero)) { /* "0.0 + cd" = cd */
+            QINCREF(cd);
+            sum = cd;
+        } else if (!strcmp(qstring_get_str(cd), str_zero)) { /* "ab + 0.0" = ab */
+            QINCREF(ab);
+            sum = ab;
+        } else {
+            sum = qstring_from_fmt("(%s + %s)", qstring_get_str(ab),
+                                                qstring_get_str(cd));
+        }
     } else {
         sum = qstring_from_fmt("((r0.a >= 0.5) ? %s : %s)",
                                qstring_get_str(cd), qstring_get_str(ab));
@@ -470,7 +588,7 @@ static void add_stage_code(struct PixelShader *ps,
 
     QString *sum_mapping = get_output(sum, output.mapping);
     if (qstring_get_length(sum_dest)) {
-        qstring_append_fmt(ps->code, "%s.%s = %s(%s);\n",
+        qstring_append_fmt(ps->code, "  %s.%s = %s(%s);\n",
                            qstring_get_str(sum_dest), write_mask, caster, qstring_get_str(sum_mapping));
     }
 
@@ -502,10 +620,27 @@ static void add_final_stage_code(struct PixelShader *ps, struct FCInputInfo fina
     QString *g = get_input_var(ps, final.g, false);
 
     add_var_ref(ps, "r0");
-    qstring_append_fmt(ps->code, "r0.rgb = vec3((%s * %s) + ((1.0 - %s) * %s) + %s);\n",
-                       qstring_get_str(a), qstring_get_str(b),
-                       qstring_get_str(a), qstring_get_str(c), qstring_get_str(d));
-    qstring_append_fmt(ps->code, "r0.a = %s;\n", qstring_get_str(g));
+
+    /* "a * b + (1.0 - a) * c + d"
+       "a * b                    " = ab
+       "        (1.0 - a)        " = ia
+       "        (1.0 - a) * c    " = ac
+       "a * b + (1.0 - a) * c    " = abac
+       "a * b + (1.0 - a) * c + d" = abacd */
+
+    QString* ab = qstring_from_fmt("%s * %s", qstring_get_str(a), qstring_get_str(b)); //FIXME: pretty_multiply()
+    QString* ia = qstring_from_fmt("(1.0 - %s)", qstring_get_str(a)); //FIXME: pretty_invert(, unsign = false, brackets = true)
+    QString* ac = qstring_from_fmt("%s * %s",qstring_get_str(ia), qstring_get_str(c)); //FIXME: pretty_multiply() or something?
+    QString* abac = qstring_from_fmt("(%s + %s)", qstring_get_str(ab), qstring_get_str(ac)); //FIXME: pretty_add(...,brackets = true)
+    QString* abacd = qstring_from_fmt("%s + %s", qstring_get_str(abac), qstring_get_str(d)); //FIXME: pretty_add(...,brackets = false)
+    qstring_append_fmt(ps->code, "  r0.rgb = vec3(%s);\n", qstring_get_str(abacd));
+    qstring_append_fmt(ps->code, "  r0.a = %s;\n", qstring_get_str(g));
+
+    QDECREF(ab);
+    QDECREF(ia);
+    QDECREF(ac);
+    QDECREF(abac);
+    QDECREF(abacd);
 
     QDECREF(a);
     QDECREF(b);
@@ -524,12 +659,13 @@ static QString* psh_convert(struct PixelShader *ps)
 {
     int i;
 
-    QString *preflight = qstring_new();
+    QString *preflight = qstring_from_str("#version 110\n"
+                                          "\n");
     QString *vars = qstring_new();
 
-    qstring_append(vars, "vec4 v0 = gl_Color;\n");
-    qstring_append(vars, "vec4 v1 = gl_SecondaryColor;\n");
-    qstring_append(vars, "float fog = gl_FogFragCoord;\n");
+    qstring_append(vars, "  vec4 v0 = gl_Color;\n");
+    qstring_append(vars, "  vec4 v1 = gl_SecondaryColor;\n");
+    qstring_append(vars, "  vec4 fog = vec4(gl_Fog.color.rgb,gl_FogFragCoord);\n"); //FIXME: I have no idea what I'm doing!
 
     for (i = 0; i < 4; i++) {
         if (ps->tex_modes[i] == PS_TEXTUREMODES_NONE) continue;
@@ -576,21 +712,33 @@ static QString* psh_convert(struct PixelShader *ps)
     ps->code = qstring_new();
     for (i = 0; i < ps->num_stages; i++) {
         ps->cur_stage = i;
-        qstring_append_fmt(ps->code, "  /* Stage %d */\n", i);
-        qstring_append_fmt(ps->code, "  ");
+        qstring_append_fmt(ps->code, "  /* Stage %d */", ps->cur_stage); //FIXME: Output binary source
+#if 0
+        qstring_append_fmt(ps->code, " DEBUG(%d)",ps->cur_stage); //FIXME: Write DEBUG macro..
+#endif
+        qstring_append(ps->code, "\n");
         add_stage_code(ps, ps->stage[i].rgb_input, ps->stage[i].rgb_output, "rgb", false);
-        qstring_append_fmt(ps->code, "  ");
         add_stage_code(ps, ps->stage[i].alpha_input, ps->stage[i].alpha_output, "a", true);
+        qstring_append(ps->code, "\n");
     }
 
     if (ps->final_input.enabled) {
-        ps->cur_stage = 8;
-        qstring_append(ps->code, "  /* Final Combiner */\n");
+        ps->cur_stage = FINAL_STAGE;
+        qstring_append(ps->code, "  /* Final Combiner */"); //FIXME: Output binary source
+#if 0
+        qstring_append_fmt(ps->code, " DEBUG(final_stage)"); //FIXME: Write DEBUG macro..
+#endif
+        qstring_append(ps->code, "\n");
         add_final_stage_code(ps, ps->final_input);
     }
 
+#if 0
+        qstring_append_fmt(ps->code,"  /* Debug final register states */\n"
+                                    "  DEBUG(final_stage + 1)\n"); //FIXME: Write DEBUG macro..
+#endif
+
     for (i = 0; i < ps->num_var_refs; i++) {
-        qstring_append_fmt(vars, "vec4 %s;\n", ps->var_refs[i]);
+        qstring_append_fmt(vars, "  vec4 %s;\n", ps->var_refs[i]);
         if (strcmp(ps->var_refs[i], "r0") == 0) {
             if (ps->tex_modes[0] != PS_TEXTUREMODES_NONE) {
                 qstring_append(vars, "  r0.a = t0.a;\n");
@@ -607,11 +755,28 @@ static QString* psh_convert(struct PixelShader *ps)
 
     QString *final = qstring_new();
     qstring_append(final, qstring_get_str(preflight));
-    qstring_append(final, "void main() {\n");
+#if 0
+    qstring_append(final, "\n"
+                   "int final_stage = " ## FINAL_STAGE ## ";"
+                   "uniform int debug_stage;"
+                   "#define DEBUG(stage)\\\n"
+                   "  { \\\n"
+	                 "    if (int(stage) >= debug_stage) { \\\n"
+	                 "      return; \\\n"
+                   "    } \\\n"
+                   "  }\n"
+#endif
+    qstring_append(final, "\n"
+                          "void main() {\n"
+                          "\n");
     qstring_append(final, qstring_get_str(vars));
+    qstring_append(final, "\n");
     qstring_append(final, qstring_get_str(ps->code));
-    qstring_append(final, "  gl_FragColor = r0;\n");
-    qstring_append(final, "}\n");
+    qstring_append(final, "\n"
+                          "  /* Set output */\n"
+                          "  gl_FragColor = r0;\n"
+                          "\n"
+                          "}\n");
 
     QDECREF(preflight);
     QDECREF(vars);

@@ -91,6 +91,7 @@
 #   define NV097_SET_COMBINER_ALPHA_ICW                       0x00970260
 #   define NV097_SET_COMBINER_SPECULAR_FOG_CW0                0x00970288
 #   define NV097_SET_COMBINER_SPECULAR_FOG_CW1                0x0097028C
+#   define NV097_SET_FOG_COLOR                                0x009702a8
 #   define NV097_SET_COLOR_MASK                               0x00970358
 #       define NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE            0xFF000000
 #           define NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE_FALSE           0x00
