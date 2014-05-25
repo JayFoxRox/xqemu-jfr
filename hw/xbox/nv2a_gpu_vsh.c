@@ -698,13 +698,6 @@ static const char* vsh_header =
 
 /*
 
-
-FIXME: !!!!!! MAJOR BUG !!!!!!
-JayFoxRox: mhhh I believe there is a bug in my glsl stuff too I didn't even think about before
-JayFoxRox: but if mask is yz it would result in: dest.yz = OP().yz when it should be dest.yz = OP().xy
-
-
-
 */
 
 // Code from pages linked here http://msdn.microsoft.com/en-us/library/windows/desktop/bb174703%28v=vs.85%29.aspx
