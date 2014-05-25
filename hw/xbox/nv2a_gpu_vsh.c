@@ -251,21 +251,21 @@ static const char* mask_str[] = {
 static const char* mask_str[] = {
             // xyzw xyzw
     "",     // 0000 ____
-    ",w",   // 0001 ___w
-    ",z",   // 0010 __z_
-    ",zw",  // 0011 __zw
-    ",y",   // 0100 _y__
-    ",yw",  // 0101 _y_w
-    ",yz",  // 0110 _yz_
-    ",yzw", // 0111 _yzw
-    ",x",   // 1000 x___
-    ",xw",  // 1001 x__w
-    ",xz",  // 1010 x_z_
-    ",xzw", // 1011 x_zw
-    ",xy",  // 1100 xy__
-    ",xyw", // 1101 xy_w
-    ",xyz", // 1110 xyz_
-    ",xyzw"//.xyzw  1111 xyzw
+    ".w",   // 0001 ___w
+    ".z",   // 0010 __z_
+    ".zw",  // 0011 __zw
+    ".y",   // 0100 _y__
+    ".yw",  // 0101 _y_w
+    ".yz",  // 0110 _yz_
+    ".yzw", // 0111 _yzw
+    ".x",   // 1000 x___
+    ".xw",  // 1001 x__w
+    ".xz",  // 1010 x_z_
+    ".xzw", // 1011 x_zw
+    ".xy",  // 1100 xy__
+    ".xyw", // 1101 xy_w
+    ".xyz", // 1110 xyz_
+    ".xyzw" // 1111 xyzw
 };
 #endif
 
@@ -729,49 +729,49 @@ JayFoxRox: but if mask is yz it would result in: dest.yz = OP().yz when it shoul
     "#define _in(v) vec4(v)\n"
 #endif
     "\n"
-    "#define MOV(dest,mask, src) dest.mask = _out(dest.mask,_MOV(_in(src)))\n"
+    "#define MOV(dest, src) dest = _out(dest,_MOV(_in(src)))\n"
     "vec4 _MOV(vec4 src)\n" 
     "{\n"
     "  return src;\n"
     "}\n"
     "\n"
-    "#define MUL(dest,mask, src0, src1) dest.mask = _out(dest.mask,_MUL(_in(src0), _in(src1)))\n"
+    "#define MUL(dest, src0, src1) dest = _out(dest,_MUL(_in(src0), _in(src1)))\n"
     "vec4 _MUL(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return src0 * src1;\n"
     "}\n"
     "\n"
-    "#define ADD(dest,mask, src0, src1) dest.mask = _out(dest.mask,_ADD(_in(src0), _in(src1)))\n"
+    "#define ADD(dest, src0, src1) dest = _out(dest,_ADD(_in(src0), _in(src1)))\n"
     "vec4 _ADD(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return src0 + src1;\n"
     "}\n"
     "\n"
-    "#define MAD(dest,mask, src0, src1, src2) dest.mask = _out(dest.mask,_MAD(_in(src0), _in(src1), _in(src2)))\n"
+    "#define MAD(dest, src0, src1, src2) dest = _out(dest,_MAD(_in(src0), _in(src1), _in(src2)))\n"
     "vec4 _MAD(vec4 src0, vec4 src1, vec4 src2)\n" 
     "{\n"
     "  return src0 * src1 + src2;\n"
     "}\n"
     "\n"
-    "#define DP3(dest,mask, src0, src1) dest.mask = _out(dest.mask,_DP3(_in(src0), _in(src1)))\n"
+    "#define DP3(dest, src0, src1) dest = _out(dest,_DP3(_in(src0), _in(src1)))\n"
     "vec4 _DP3(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return vec4(dot(src0.xyz, src1.xyz));\n"
     "}\n"
     "\n"
-    "#define DPH(dest,mask, src0, src1) dest.mask = _out(dest.mask,_DPH(_in(src0), _in(src1)))\n"
+    "#define DPH(dest, src0, src1) dest = _out(dest,_DPH(_in(src0), _in(src1)))\n"
     "vec4 _DPH(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return vec4(dot(vec4(src0.xyz, 1.0), src1));\n"
     "}\n"
     "\n"
-    "#define DP4(dest,mask, src0, src1) dest.mask = _out(dest.mask,_DP4(_in(src0), _in(src1)))\n"
+    "#define DP4(dest, src0, src1) dest = _out(dest,_DP4(_in(src0), _in(src1)))\n"
     "vec4 _DP4(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return vec4(dot(src0, src1));\n"
     "}\n"
     "\n"
-    "#define DST(dest,mask, src0, src1) dest.mask = _out(dest.mask,_DST(_in(src0), _in(src1)))\n"
+    "#define DST(dest, src0, src1) dest = _out(dest,_DST(_in(src0), _in(src1)))\n"
     "vec4 _DST(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return vec4(1.0,\n"
@@ -780,19 +780,19 @@ JayFoxRox: but if mask is yz it would result in: dest.yz = OP().yz when it shoul
     "              src1.w);\n"
     "}\n"
     "\n"
-    "#define MIN(dest,mask, src0, src1) dest.mask = _out(dest.mask,_MIN(_in(src0), _in(src1)))\n"
+    "#define MIN(dest, src0, src1) dest = _out(dest,_MIN(_in(src0), _in(src1)))\n"
     "vec4 _MIN(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return min(src0, src1);\n"
     "}\n"
     "\n"
-    "#define MAX(dest,mask, src0, src1) dest.mask = _out(dest.mask,_MAX(_in(src0), _in(src1)))\n"
+    "#define MAX(dest, src0, src1) dest = _out(dest,_MAX(_in(src0), _in(src1)))\n"
     "vec4 _MAX(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return max(src0, src1);\n"
     "}\n"
     "\n"
-    "#define SLT(dest,mask, src0, src1) dest.mask = _out(dest.mask,_SLT(_in(src0), _in(src1)))\n"
+    "#define SLT(dest, src0, src1) dest = _out(dest,_SLT(_in(src0), _in(src1)))\n"
     "vec4 _SLT(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return vec4(src0.x < src1.x ? 1.0 : 0.0,\n"
@@ -801,13 +801,13 @@ JayFoxRox: but if mask is yz it would result in: dest.yz = OP().yz when it shoul
     "              src0.w < src1.w ? 1.0 : 0.0);\n"
     "}\n"
     "\n"
-    "#define ARL(dest,mask, src) dest = _ARL(_in(src).x)\n"
+    "#define ARL(dest, src) dest = _ARL(_in(src).x)\n"
     "int _ARL(float src)\n" 
     "{\n"
     "  return int(src);\n"
     "}\n"
     "\n"
-    "#define SGE(dest,mask, src0, src1) dest.mask = _out(dest.mask,_SGE(_in(src0), _in(src1)))\n"
+    "#define SGE(dest, src0, src1) dest = _out(dest,_SGE(_in(src0), _in(src1)))\n"
     "vec4 _SGE(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return vec4(src0.x >= src1.x ? 1.0 : 0.0,\n"
@@ -816,13 +816,13 @@ JayFoxRox: but if mask is yz it would result in: dest.yz = OP().yz when it shoul
     "              src0.w >= src1.w ? 1.0 : 0.0);\n"
     "}\n"
     "\n"
-    "#define RCP(dest,mask, src) dest.mask = _out(dest.mask,_RCP(_in(src).x))\n"
+    "#define RCP(dest, src) dest = _out(dest,_RCP(_in(src).x))\n"
     "vec4 _RCP(float src)\n" 
     "{\n"
     "  return vec4(1.0 / src);\n"
     "}\n"
     "\n"
-    "#define RCC(dest,mask, src) dest.mask = _out(dest.mask,_RCC(_in(src).x))\n"
+    "#define RCC(dest, src) dest = _out(dest,_RCC(_in(src).x))\n"
     "vec4 _RCC(float src)\n" 
     "{\n"
     "  float t = 1.0 / src;\n"
@@ -836,25 +836,25 @@ JayFoxRox: but if mask is yz it would result in: dest.yz = OP().yz when it shoul
     "  return vec4(t);\n"
     "}\n"
     "\n"
-    "#define RSQ(dest,mask, src) dest.mask = _out(dest.mask,_RSQ(_in(src).x))\n"
+    "#define RSQ(dest, src) dest = _out(dest,_RSQ(_in(src).x))\n"
     "vec4 _RSQ(float src)\n" 
     "{\n"
     "  return vec4(1.0 / sqrt(src));\n"
     "}\n"
     "\n"
-    "#define EXP(dest,mask, src) dest.mask = _out(dest.mask,_EXP(_in(src).x))\n"
+    "#define EXP(dest, src) dest = _out(dest,_EXP(_in(src).x))\n"
     "vec4 _EXP(float src)\n" 
     "{\n"
     "  return vec4(exp2(src));\n"
     "}\n"
     "\n"
-    "#define LOG(dest,mask, src) dest.mask = _out(dest.mask,_LOG(_in(src).x))\n"
+    "#define LOG(dest, src) dest = _out(dest,_LOG(_in(src).x))\n"
     "vec4 _LOG(float src)\n" 
     "{\n"
     "  return vec4(log2(src));\n"
     "}\n"
     "\n"
-    "#define LIT(dest,mask, src) dest.mask = _out(dest.mask,_LIT(_in(src)))\n"
+    "#define LIT(dest, src) dest = _out(dest,_LIT(_in(src)))\n"
     "vec4 _LIT(vec4 src)\n" 
     "{\n"
     "  vec4 t = vec4(1.0, 0.0, 0.0, 1.0);\n"
