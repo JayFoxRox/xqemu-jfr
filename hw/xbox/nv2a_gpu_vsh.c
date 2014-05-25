@@ -25,6 +25,10 @@
  * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
+/* This should probably be disabled for final builds, it could be slower
+   if the driver doesn't optimize the resulting glsl code */
+#define NICE_CODE
+
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
@@ -378,13 +382,13 @@ static QString* decode_swizzle(uint32_t *shader_token,
     /* Don't print duplicates */
     } else if (x == y && y == z && z == w) {
         return qstring_from_str((char[]){'.', swizzle_str[x], '\0'});
-#if 0
-    } else if (x == y && z == w) {
+#ifdef NICE_CODE
+    } else if (y == z && z == w) {
         return qstring_from_str((char[]){'.',
-            swizzle_str[x], swizzle_str[y], '\0'}); //FIXME: !!!! Would turn ".xxyy" into ".xy" ?! !!!!
-    /* } else if (z == w) {
+            swizzle_str[x], swizzle_str[y], '\0'});
+    } else if (z == w) {
         return qstring_from_str((char[]){'.',
-            swizzle_str[x], swizzle_str[y], swizzle_str[z], '\0'}); */
+            swizzle_str[x], swizzle_str[y], swizzle_str[z], '\0'});
 #endif
     } else {
         return qstring_from_str((char[]){'.',
@@ -709,54 +713,65 @@ JayFoxRox: but if mask is yz it would result in: dest.yz = OP().yz when it shoul
     "\n"
     /* Oh boy.. Let's hope these are optimized away! */
     "/* Converts number of components of rvalue to lvalue */\n"
-    "float components(float l, vec4 r) { return r.x; }\n"
-    "vec2 components(vec2 l, vec4 r) { return r.xy; }\n"
-    "vec3 components(vec3 l, vec4 r) { return r.xyz; }\n"
-    "vec4 components(vec4 l, vec4 r) { return r.xyzw; }\n"
+    "float _out(float l, vec4 r) { return r.x; }\n"
+    "vec2 _out(vec2 l, vec4 r) { return r.xy; }\n"
+    "vec3 _out(vec3 l, vec4 r) { return r.xyz; }\n"
+    "vec4 _out(vec4 l, vec4 r) { return r.xyzw; }\n"
     "\n"
-    "#define MOV(dest,mask, src) dest.mask = components(dest.mask,_MOV(vec4(src)))\n"
+#ifdef NICE_CODE
+    "/* Converts the input to vec4, pads with last component */\n"
+    "vec4 _in(float v) { return vec4(v); }\n"
+    "vec4 _in(vec2 v) { return vec4(v.xy,v.y,v.y); }\n"
+    "vec4 _in(vec3 v) { return vec4(v.xyz,v.z); }\n"
+    "vec4 _in(vec4 v) { return v; }\n"
+#else
+    "/* Make sure input is always a vec4 */\n"
+    "#define _in(v) vec4(v)\n"
+#endif
+    "\n"
+    "#define MOV(dest,mask, src) dest.mask = _out(dest.mask,_MOV(_in(src)))\n"
     "vec4 _MOV(vec4 src)\n" 
     "{\n"
     "  return src;\n"
     "}\n"
     "\n"
-    "#define MUL(dest,mask, src0, src1) dest.mask = components(dest.mask,_MUL(vec4(src0), vec4(src1)))\n"
+    "#define MUL(dest,mask, src0, src1) dest.mask = _out(dest.mask,_MUL(_in(src0), _in(src1)))\n"
     "vec4 _MUL(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return src0 * src1;\n"
     "}\n"
     "\n"
-    "#define ADD(dest,mask, src0, src1) dest.mask = components(dest.mask,_ADD(vec4(src0), vec4(src1)))\n"
+    "#define ADD(dest,mask, src0, src1) dest.mask = _out(dest.mask,_ADD(_in(src0), _in(src1)))\n"
     "vec4 _ADD(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return src0 + src1;\n"
     "}\n"
     "\n"
-    "#define MAD(dest,mask, src0, src1, src2) dest.mask = components(dest.mask,_MAD(vec4(src0), vec4(src1), vec4(src2)))\n"
+    "#define MAD(dest,mask, src0, src1, src2) dest.mask = _out(dest.mask,_MAD(_in(src0), _in(src1), _in(src2)))\n"
     "vec4 _MAD(vec4 src0, vec4 src1, vec4 src2)\n" 
     "{\n"
     "  return src0 * src1 + src2;\n"
     "}\n"
     "\n"
-    "#define DP3(dest,mask, src0, src1) dest.mask = components(dest.mask,_DP3(vec4(src0), vec4(src1)))\n"
+    "#define DP3(dest,mask, src0, src1) dest.mask = _out(dest.mask,_DP3(_in(src0), _in(src1)))\n"
     "vec4 _DP3(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return vec4(dot(src0.xyz, src1.xyz));\n"
     "}\n"
     "\n"
-    "#define DPH(dest,mask, src0, src1) dest.mask = components(dest.mask,_DPH(vec4(src0), vec4(src1)))\n"
+    "#define DPH(dest,mask, src0, src1) dest.mask = _out(dest.mask,_DPH(_in(src0), _in(src1)))\n"
     "vec4 _DPH(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return vec4(dot(vec4(src0.xyz, 1.0), src1));\n"
     "}\n"
     "\n"
-    "#define DP4(dest,mask, src0, src1) dest.mask = components(dest.mask,_DP4(vec4(src0), vec4(src1)))\n"
+    "#define DP4(dest,mask, src0, src1) dest.mask = _out(dest.mask,_DP4(_in(src0), _in(src1)))\n"
     "vec4 _DP4(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return vec4(dot(src0, src1));\n"
     "}\n"
     "\n"
-    "#define DST(dest,mask, src0, src1) dest.mask = components(dest.mask,_DST(vec4(src0), vec4(src1)))\n"
+    "#define DST(dest,mask, src0, src1) dest.mask = _out(dest.mask,_DST(_in(src0), _in(src1)))\n"
     "vec4 _DST(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return vec4(1.0,\n"
@@ -765,19 +780,19 @@ JayFoxRox: but if mask is yz it would result in: dest.yz = OP().yz when it shoul
     "              src1.w);\n"
     "}\n"
     "\n"
-    "#define MIN(dest,mask, src0, src1) dest.mask = components(dest.mask,_MIN(vec4(src0), vec4(src1)))\n"
+    "#define MIN(dest,mask, src0, src1) dest.mask = _out(dest.mask,_MIN(_in(src0), _in(src1)))\n"
     "vec4 _MIN(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return min(src0, src1);\n"
     "}\n"
     "\n"
-    "#define MAX(dest,mask, src0, src1) dest.mask = components(dest.mask,_MAX(vec4(src0), vec4(src1)))\n"
+    "#define MAX(dest,mask, src0, src1) dest.mask = _out(dest.mask,_MAX(_in(src0), _in(src1)))\n"
     "vec4 _MAX(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return max(src0, src1);\n"
     "}\n"
     "\n"
-    "#define SLT(dest,mask, src0, src1) dest.mask = components(dest.mask,_SLT(vec4(src0), vec4(src1)))\n"
+    "#define SLT(dest,mask, src0, src1) dest.mask = _out(dest.mask,_SLT(_in(src0), _in(src1)))\n"
     "vec4 _SLT(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return vec4(src0.x < src1.x ? 1.0 : 0.0,\n"
@@ -786,13 +801,13 @@ JayFoxRox: but if mask is yz it would result in: dest.yz = OP().yz when it shoul
     "              src0.w < src1.w ? 1.0 : 0.0);\n"
     "}\n"
     "\n"
-    "#define ARL(dest,mask, src) dest = _ARL(vec4(src).x)\n"
+    "#define ARL(dest,mask, src) dest = _ARL(_in(src).x)\n"
     "int _ARL(float src)\n" 
     "{\n"
     "  return int(src);\n"
     "}\n"
     "\n"
-    "#define SGE(dest,mask, src0, src1) dest.mask = components(dest.mask,_SGE(vec4(src0), vec4(src1)))\n"
+    "#define SGE(dest,mask, src0, src1) dest.mask = _out(dest.mask,_SGE(_in(src0), _in(src1)))\n"
     "vec4 _SGE(vec4 src0, vec4 src1)\n" 
     "{\n"
     "  return vec4(src0.x >= src1.x ? 1.0 : 0.0,\n"
@@ -801,13 +816,13 @@ JayFoxRox: but if mask is yz it would result in: dest.yz = OP().yz when it shoul
     "              src0.w >= src1.w ? 1.0 : 0.0);\n"
     "}\n"
     "\n"
-    "#define RCP(dest,mask, src) dest.mask = components(dest.mask,_RCP(vec4(src).x))\n"
+    "#define RCP(dest,mask, src) dest.mask = _out(dest.mask,_RCP(_in(src).x))\n"
     "vec4 _RCP(float src)\n" 
     "{\n"
     "  return vec4(1.0 / src);\n"
     "}\n"
     "\n"
-    "#define RCC(dest,mask, src) dest.mask = components(dest.mask,_RCC(vec4(src).x))\n"
+    "#define RCC(dest,mask, src) dest.mask = _out(dest.mask,_RCC(_in(src).x))\n"
     "vec4 _RCC(float src)\n" 
     "{\n"
     "  float t = 1.0 / src;\n"
@@ -821,25 +836,25 @@ JayFoxRox: but if mask is yz it would result in: dest.yz = OP().yz when it shoul
     "  return vec4(t);\n"
     "}\n"
     "\n"
-    "#define RSQ(dest,mask, src) dest.mask = components(dest.mask,_RSQ(vec4(src).x))\n"
+    "#define RSQ(dest,mask, src) dest.mask = _out(dest.mask,_RSQ(_in(src).x))\n"
     "vec4 _RSQ(float src)\n" 
     "{\n"
     "  return vec4(1.0 / sqrt(src));\n"
     "}\n"
     "\n"
-    "#define EXP(dest,mask, src) dest.mask = components(dest.mask,_EXP(vec4(src).x))\n"
+    "#define EXP(dest,mask, src) dest.mask = _out(dest.mask,_EXP(_in(src).x))\n"
     "vec4 _EXP(float src)\n" 
     "{\n"
     "  return vec4(exp2(src));\n"
     "}\n"
     "\n"
-    "#define LOG(dest,mask, src) dest.mask = components(dest.mask,_LOG(vec4(src).x))\n"
+    "#define LOG(dest,mask, src) dest.mask = _out(dest.mask,_LOG(_in(src).x))\n"
     "vec4 _LOG(float src)\n" 
     "{\n"
     "  return vec4(log2(src));\n"
     "}\n"
     "\n"
-    "#define LIT(dest,mask, src) dest.mask = components(dest.mask,_LIT(vec4(src)))\n"
+    "#define LIT(dest,mask, src) dest.mask = _out(dest.mask,_LIT(_in(src)))\n"
     "vec4 _LIT(vec4 src)\n" 
     "{\n"
     "  vec4 t = vec4(1.0, 0.0, 0.0, 1.0);\n"
@@ -1017,7 +1032,7 @@ QString* vsh_translate(uint16_t version,
 #if 1
         "  /* Un-screenspace transform */\n"
         "  R12.xyz = R12.xyz - viewport_offset.xyz;\n"
-        "  vec3 tmp = vec3(1.0)\n;"
+        "  vec3 tmp = vec3(1.0);\n"
 
         /* FIXME: old comment was "scale_z = view_z == 0 ? 1 : (1 / view_z)" */
         "  if (viewport_scale.x != 0.0) { tmp.x /= viewport_scale.x; }\n"
