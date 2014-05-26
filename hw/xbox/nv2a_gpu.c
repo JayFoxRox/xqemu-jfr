@@ -3284,6 +3284,11 @@ printf("%i \t%i: \tCLIP %ix%i [%.3f;%.3f] \tVP: %.3fx%.3fx%.3f\tAA: %i, PL: %s, 
         pg->textures[slot].max_mipmap_level =
             GET_MASK(parameter, NV097_SET_TEXTURE_CONTROL0_MAX_LOD_CLAMP);
 
+        if (GET_MASK(parameter, NV097_SET_TEXTURE_CONTROL0_ALPHA_KILL_ENABLE)) {
+            printf("Alphakill not supported yet\n");
+            assert(0);
+        }
+
         pg->shaders_dirty = true;
         break;
     CASE_4(NV097_SET_TEXTURE_CONTROL1, 64):

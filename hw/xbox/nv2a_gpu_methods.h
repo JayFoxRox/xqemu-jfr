@@ -198,6 +198,7 @@
 #       define NV097_SET_TEXTURE_CONTROL0_ENABLE                 (1 << 30)
 #       define NV097_SET_TEXTURE_CONTROL0_MIN_LOD_CLAMP           0x3FFC0000
 #       define NV097_SET_TEXTURE_CONTROL0_MAX_LOD_CLAMP           0x0003FFC0
+#       define NV097_SET_TEXTURE_CONTROL0_ALPHA_KILL_ENABLE       0x00000004
 #   define NV097_SET_TEXTURE_CONTROL1                         0x00971B10
 #       define NV097_SET_TEXTURE_CONTROL1_IMAGE_PITCH             0xFFFF0000
 #   define NV097_SET_TEXTURE_FILTER                           0x00971B14
