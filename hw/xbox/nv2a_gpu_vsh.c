@@ -941,21 +941,13 @@ QString* vsh_translate(uint16_t version,
         "  debug_oT3 = oT3;\n"
         "\n"
 #endif
+
+        // Espes experimental
         "  /* Un-screenspace transform */\n"
-        "  R12.xyz = R12.xyz - viewport_offset.xyz;\n"
-        "  vec3 tmp = vec3(1.0);\n"
-
-        /* FIXME: old comment was "scale_z = view_z == 0 ? 1 : (1 / view_z)" */
-        "  if (viewport_scale.x != 0.0) { tmp.x /= viewport_scale.x; }\n"
-        "  if (viewport_scale.y != 0.0) { tmp.y /= viewport_scale.y; }\n"
-        "  if (viewport_scale.z != 0.0) { tmp.z /= viewport_scale.z; }\n"
-
-        "  R12.xyz = R12.xyz * tmp.xyz;\n"
-#if 1
-        "  R12.xyz *= R12.w;\n" //This breaks 2D? Maybe w is zero?
-#else
-        "  R12.w = 1.0;\n" //This breaks 2D? Maybe w is zero?
-#endif
+        "  oPos.x = (oPos.x - viewport_offset.x) / viewport_scale.x;\n"
+        "  oPos.y = (oPos.y - viewport_offset.y) / viewport_scale.y;\n"
+        "  oPos.z = (oPos.z - 0.5 * (cliprange.x + cliprange.y)) / (0.5 * (cliprange.y - cliprange.x));\n"
+        "  oPos.w = sign(oPos.w);\n"
         "\n"
 
         /* Z coord [0;1]->[-1;1] mapping, see comment in transform_projection
