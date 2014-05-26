@@ -41,18 +41,18 @@ static void debugger_finish_frame(void) {
     debugger_frame++;
 }
 
-#if 0
+#ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
 
-static void debugger_prepare_feedback(unsigned int vertex_start, unsigned int vertex_count_max) {
-    unsigned int varying_count = sizeof(feedbackVaryings)/sizeof(feedbackVaryings[0]);
-    glTransformFeedbackVaryingsEXT(program, varying_count, feedbackVaryings, GL_INTERLEAVED_ATTRIBS_EXT);
+static void debugger_prepare_feedback(GLuint program, unsigned int vertex_count) {
+    unsigned int varying_count = sizeof(feedback_varyings)/sizeof(feedback_varyings[0]);
+    glTransformFeedbackVaryingsEXT(program, varying_count, feedback_varyings, GL_INTERLEAVED_ATTRIBS_EXT);
 
     static GLuint tbo = -1;
     if (tbo == -1){
         glGenBuffers(1, &tbo);
     }
     glBindBuffer(GL_ARRAY_BUFFER, tbo);
-    glBufferData(GL_ARRAY_BUFFER, 4*sizeof(GLfloat)*varying_count*(VERTEX_COUNT+VERTEX_START+2), NULL, GL_STATIC_READ); /* +2 so we also get the end of the current triangle */
+    glBufferData(GL_ARRAY_BUFFER, 4*sizeof(GLfloat)*varying_count*vertex_count, NULL, GL_STATIC_READ); /* +2 so we also get the end of the current triangle */
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBufferBaseEXT(GL_TRANSFORM_FEEDBACK_BUFFER_EXT, 0, tbo);
     assert(glGetError() == 0);
@@ -72,7 +72,7 @@ static const gl_primitive_class_map[] = {
     [GL_POLYGON] = -1
 };
 
-static bool debugger_begin_feedback() {
+static bool debugger_begin_feedback(KelvinState* kelvin) {
     assert(glGetError() == 0);
     if (gl_primitive_class_map[kelvin->gl_primitive_mode] != -1) {
         glBeginTransformFeedbackEXT(gl_primitive_class_map[kelvin->gl_primitive_mode]);
@@ -82,7 +82,7 @@ static bool debugger_begin_feedback() {
     return false;
 }
 
-static bool debugger_end_feedback() {
+static bool debugger_end_feedback(KelvinState* kelvin) {
     assert(glGetError() == 0);
     if (gl_primitive_class_map[kelvin->gl_primitive_mode] != -1) {
         assert(glGetError() == 0);
@@ -92,20 +92,21 @@ static bool debugger_end_feedback() {
     return false;
 }
 
-static void debugger_dump_feedback() {
-
+static void debugger_dump_feedback(unsigned int vertex_start, unsigned int vertex_count) {
+    int i;
     debugger_push_group("NV2A: Vertex Shader feedback");
     glFlush();
     assert(glGetError() == 0);
     GLint program;
     glGetIntegerv(GL_CURRENT_PROGRAM,&program);
-    for(i = 0; i < VERTEX_COUNT; i++) {
+    for(i = 0; i < vertex_count; i++) {
         int j;
-        unsigned int varying_count = sizeof(feedbackVaryings)/sizeof(feedbackVaryings[0]);
+        unsigned int varying_count = sizeof(feedback_varyings)/sizeof(feedback_varyings[0]);
         for(j = 0; j < varying_count; j++) {
             GLfloat v[4];
-            glGetBufferSubData(GL_TRANSFORM_FEEDBACK_BUFFER_EXT, ((VERTEX_START+i)*varying_count+j)*sizeof(v), sizeof(v), v);
-            debugger_message("NV2A: Feedback [%d:%d]: %16f %16f %16f %16f (%s)", program, VERTEX_START+i, v[0], v[1], v[2], v[3], feedbackVaryings[j]);
+            glGetBufferSubData(GL_TRANSFORM_FEEDBACK_BUFFER_EXT, ((vertex_start+i)*varying_count+j)*sizeof(v), sizeof(v), v);
+            debugger_message("NV2A: Feedback [%d:%d]: %16f %16f %16f %16f (%s)", program, vertex_start+i, v[0], v[1], v[2], v[3], feedback_varyings[j]);
+                      printf("NV2A: Feedback [%d:%d]: %16f %16f %16f %16f (%s)\n", program, vertex_start+i, v[0], v[1], v[2], v[3], feedback_varyings[j]);
         }
     }
 
@@ -120,6 +121,10 @@ static void debugger_export_vertex_shader(const char* file, KelvinState* kelvin,
     GLint prog;
     glGetIntegerv(GL_CURRENT_PROGRAM,&prog);
     FILE* f = fopen(file,"wb");
+    if (f == NULL) {
+        printf("Couldn't dump shader '%s'\n",file);
+        return;
+    }
     if (standalone) {
         fprintf(f,"#version 110\n"
                   "\n"
@@ -189,6 +194,10 @@ static void debugger_export_mesh(const char* file, unsigned int position, unsign
         return;
     }
     FILE* f = fopen(file,"wb");
+    if (f == NULL) {
+        printf("Couldn't dump mesh '%s'\n",file);
+        return;
+    }
     for(i = 0; i < vcount; i++) {
         float* v0 = &ptr0[i*stride0];
         float* v3 = &ptr3[i*stride3];

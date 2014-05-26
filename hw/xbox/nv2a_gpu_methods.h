@@ -105,7 +105,6 @@
 #       define NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE             0x000000FF
 #           define NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE_FALSE            0x00
 #           define NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE_TRUE             0x01
-#   define NV097_SET_STENCIL_MASK                             0x00970360
 #   define NV097_SET_CLIP_MIN                                 0x00970394
 #   define NV097_SET_CLIP_MAX                                 0x00970398
 #   define NV097_SET_TEXTURE_MATRIX_ENABLE                    0x00970420 /* 4 Slots, bool */
@@ -240,28 +239,46 @@
 #       define NV097_SET_SHADE_MODE_FLAT                          0x00001D00
 #       define NV097_SET_SHADE_MODE_SMOOTH                        0x00001D01
 
-#   define NV097_SET_DEPTH_MASK                               0x0097035c
-#       define NV097_SET_DEPTH_MASK_FALSE                         0x00000000
-#       define NV097_SET_DEPTH_MASK_TRUE                          0x00000001
+#   define NV097_SET_DEPTH_MASK                               0x0097035c /* Bool */
+#   define NV097_SET_ALPHA_TEST_ENABLE                        0x00970300 /* Bool */
+#   define NV097_SET_BLEND_ENABLE                             0x00970304 /* Bool */
+#   define NV097_SET_CULL_FACE_ENABLE                         0x00970308 /* Bool */
+#   define NV097_SET_DEPTH_TEST_ENABLE                        0x0097030c /* Bool */
+#   define NV097_SET_STENCIL_TEST_ENABLE                      0x0097032c /* Bool */
 
-#   define NV097_SET_ALPHA_TEST_ENABLE                        0x00970300
-#       define NV097_SET_ALPHA_TEST_ENABLE_FALSE                  0x00000000
-#       define NV097_SET_ALPHA_TEST_ENABLE_TRUE                   0x00000001
-#   define NV097_SET_BLEND_ENABLE                             0x00970304
-#       define NV097_SET_BLEND_ENABLE_FALSE                       0x00000000
-#       define NV097_SET_BLEND_ENABLE_TRUE                        0x00000001
-#   define NV097_SET_CULL_FACE_ENABLE                         0x00970308
-#       define NV097_SET_CULL_FACE_ENABLE_FALSE                   0x00000000
-#       define NV097_SET_CULL_FACE_ENABLE_TRUE                    0x00000001
-#   define NV097_SET_DEPTH_TEST_ENABLE                        0x0097030c
-#       define NV097_SET_DEPTH_TEST_ENABLE_FALSE                  0x00000000
-#       define NV097_SET_DEPTH_TEST_ENABLE_TRUE                   0x00000001
+#   define NV097_SET_ALPHA_REF                                0x00970340
 
-#   define NV097_SET_ALPHA_REF                               0x00970340
+#   define NV097_SET_STENCIL_MASK                             0x00970360
 
-// These are comparision functions and use map_gl_compare_func
+#   define NV097_SET_STENCIL_FUNC_REF                         0x00970368
+#   define NV097_SET_STENCIL_FUNC_MASK                        0x0097036c
+
+#   define NV097_SET_STENCIL_OP_FAIL                          0x00970370
+#   define NV097_SET_STENCIL_OP_ZFAIL                         0x00970374
+#   define NV097_SET_STENCIL_OP_ZPASS                         0x00970378
+// Used for the 3 methods above
+#   define NV097_SET_STENCIL_OP_KEEP                              0x00001E00
+#   define NV097_SET_STENCIL_OP_ZERO                              0x00000000
+#   define NV097_SET_STENCIL_OP_REPLACE                           0x00001E01
+#   define NV097_SET_STENCIL_OP_INCRSAT                           0x00001E02
+#   define NV097_SET_STENCIL_OP_DECRSAT                           0x00001E03
+#   define NV097_SET_STENCIL_OP_INVERT                            0x0000150A
+#   define NV097_SET_STENCIL_OP_INCR                              0x00008507
+#   define NV097_SET_STENCIL_OP_DECR                              0x00008508
+
+// These are comparision functions and use map_method_to_..._func
+#   define NV097_SET_STENCIL_FUNC                            0x00970364
 #   define NV097_SET_DEPTH_FUNC                              0x00970354
 #   define NV097_SET_ALPHA_FUNC                              0x0097033c
+
+#       define NV097_FUNC_NEVER                                   0x00000200
+#       define NV097_FUNC_LESS                                    0x00000201
+#       define NV097_FUNC_EQUAL                                   0x00000202
+#       define NV097_FUNC_LEQUAL                                  0x00000203
+#       define NV097_FUNC_GREATER                                 0x00000204
+#       define NV097_FUNC_NOTEQUAL                                0x00000205
+#       define NV097_FUNC_GEQUAL                                  0x00000206
+#       define NV097_FUNC_ALWAYS                                  0x00000207
 
 #   define NV097_SET_BLEND_FUNC_SFACTOR                      0x00970344
 #       define NV097_SET_BLEND_FUNC_SFACTOR_ZERO                  0x00000000

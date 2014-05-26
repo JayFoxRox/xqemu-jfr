@@ -262,7 +262,37 @@
 #define NV_PGRAPH_COMBINESPECFOG0                        0x00001944
 #define NV_PGRAPH_COMBINESPECFOG1                        0x00001948
 #define NV_PGRAPH_CONTROL_1                              0x00001950
+#       define NV_PGRAPH_CONTROL_1_STENCIL_TEST_ENABLE            0x00000001
+#       define NV_PGRAPH_CONTROL_1_STENCIL_FUNC                   0x000000F0
+#       define NV_PGRAPH_CONTROL_1_STENCIL_REF                    0x0000FF00
+#       define NV_PGRAPH_CONTROL_1_STENCIL_MASK_READ              0x00FF0000
 #       define NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE             0xFF000000
+
+// Used by NV_PGRAPH_CONTROL_1_STENCIL_FUNC
+#           define NV_PGRAPH_FUNC_NEVER           0x0
+#           define NV_PGRAPH_FUNC_LESS            0x1
+#           define NV_PGRAPH_FUNC_EQUAL           0x2
+#           define NV_PGRAPH_FUNC_LEQUAL          0x3
+#           define NV_PGRAPH_FUNC_GREATER         0x4
+#           define NV_PGRAPH_FUNC_NOTEQUAL        0x5
+#           define NV_PGRAPH_FUNC_GEQUAL          0x6
+#           define NV_PGRAPH_FUNC_ALWAYS          0x7
+
+#define NV_PGRAPH_CONTROL_2                              0x00001954
+#       define NV_PGRAPH_CONTROL_2_STENCIL_OP_FAIL                0x0000000F
+#       define NV_PGRAPH_CONTROL_2_STENCIL_OP_ZFAIL               0x000000F0
+#       define NV_PGRAPH_CONTROL_2_STENCIL_OP_ZPASS               0x00000F00
+
+// Used by NV_PGRAPH_STENCIL_OP_FAIL, NV_PGRAPH_STENCIL_OP_ZFAIL, NV_PGRAPH_STENCIL_OP_ZPASS
+#           define NV_PGRAPH_STENCIL_OP_KEEP      0x1
+#           define NV_PGRAPH_STENCIL_OP_ZERO      0x2
+#           define NV_PGRAPH_STENCIL_OP_REPLACE   0x3
+#           define NV_PGRAPH_STENCIL_OP_INCRSAT   0x4
+#           define NV_PGRAPH_STENCIL_OP_DECRSAT   0x5
+#           define NV_PGRAPH_STENCIL_OP_INVERT    0x6
+#           define NV_PGRAPH_STENCIL_OP_INCR      0x7
+#           define NV_PGRAPH_STENCIL_OP_DECR      0x8
+
 #define NV_PGRAPH_SHADERCTL                              0x00001998
 #define NV_PGRAPH_SHADERPROG                             0x0000199C
 #define NV_PGRAPH_SPECFOGFACTOR0                         0x000019AC

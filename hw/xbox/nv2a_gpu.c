@@ -29,15 +29,15 @@
 #include "qapi/qmp/qstring.h"
 #include "gl/gloffscreen.h"
 
+#include "hw/xbox/swizzle.h"
 #include "hw/xbox/u_format_r11g11b10f.h"
+
 #include "hw/xbox/nv2a_gpu_vsh.h"
 #include "hw/xbox/nv2a_gpu_psh.h"
-#include "hw/xbox/nv2a_gpu_swizzle.h"
-
 #include "hw/xbox/nv2a_gpu.h"
 
 #define DEBUG_NV2A_GPU_DISABLE_MIPMAP
-#define DEBUG_NV2A_GPU_EXPORT
+//#define DEBUG_NV2A_GPU_EXPORT
 //#define DEBUG_NV2A_GPU
 #ifdef DEBUG_NV2A_GPU
 # define NV2A_GPU_DPRINTF(format, ...)       printf("nv2a: " format, ## __VA_ARGS__)
@@ -46,24 +46,21 @@
 #endif
 
 #ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
-const char** feedback[] = {
-    // Fallback
-    [0] = { "debug_v0" },
-    // Program 31 [dolphin/seafloor.xvs]
-    [31] = { "debug_v0",
-             "debug_R12[0]",
-             "debug_R12[1]",
-             "debug_R12[2]",
-             "debug_R12[3]",
-             "debug_R12[4]",
-             "debug_R12[5]",
-             "debug_R12[6]",
-             "debug_R12[7]",
-             "debug_R12[8]",
-             "debug_oPos" }
+const char** feedback_varyings[] = {
+  "debug_v0",
+/*
+  "debug_R12[0]",
+  "debug_R12[1]",
+  "debug_R12[2]",
+  "debug_R12[3]",
+  "debug_R12[4]",
+  "debug_R12[5]",
+  "debug_R12[6]",
+  "debug_R12[7]",
+  "debug_R12[8]",
+*/
+  "debug_oPos"
 };
-#   define VERTEX_START 0
-#   define VERTEX_COUNT 20
 #endif
 
 /* 4096 x 4096 renderbuffers */
@@ -199,7 +196,7 @@ static const ColorFormatInfo kelvin_color_format_map[66] = {
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A4R4G4B4] =
         {2, false, GL_RGBA, GL_BGRA, GL_UNSIGNED_SHORT_4_4_4_4_REV},
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_R5G6B5] =
-        {2, false, GL_RGB, GL_RGB, GL_UNSIGNED_SHORT_5_6_5},
+        {2, false, GL_RGB, GL_BGR, GL_UNSIGNED_SHORT_5_6_5_REV},
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8R8G8B8] =
         {4, false, GL_RGBA, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV},
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_X8R8G8B8] =
@@ -220,7 +217,7 @@ static const ColorFormatInfo kelvin_color_format_map[66] = {
         {4, false, GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, 0, GL_RGBA},
 
     [NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_R5G6B5] =
-        {2, true, GL_RGB, GL_RGB, GL_UNSIGNED_SHORT_5_6_5},
+        {2, true, GL_RGB, GL_BGR, GL_UNSIGNED_SHORT_5_6_5_REV},
     [NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8R8G8B8] =
         {4, true, GL_RGBA, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV},
     /* TODO: how do opengl alpha textures work? */
@@ -272,6 +269,10 @@ static const ColorFormatInfo kelvin_color_format_map[66] = {
         (v) &= ~(mask);                                              \
         (v) |= ((val) << (ffs(mask)-1)) & (mask);                    \
     } while (0)
+
+#define GET_PG_REG(pg, v, mask) GET_MASK(pg->regs[NV_PGRAPH_ ## v], NV_PGRAPH_ ## v ## _ ## mask)
+
+#define SET_PG_REG(pg, v, mask, val) SET_MASK(pg->regs[NV_PGRAPH_ ## v], NV_PGRAPH_ ## v ## _ ## mask, val)
 
 #define CASE_4(v, step)                                              \
     case (v):                                                        \
@@ -548,6 +549,13 @@ typedef struct PGRAPHState {
     hwaddr dma_a, dma_b;
     Texture textures[NV2A_GPU_MAX_TEXTURES];
 
+    bool depth_mask_dirty;
+    bool color_mask_dirty;
+    bool stencil_mask_dirty;
+    bool stencil_test_enabled_dirty;
+    bool stencil_test_func_dirty;
+    bool stencil_test_op_dirty;
+
     bool shaders_dirty;
     GHashTable *shader_cache;
     GLuint gl_program;
@@ -718,26 +726,184 @@ typedef struct NV2A_GPUState {
 
 /* new style (work in function) so we can easily restore the state anytime */
 
-void update_gl_color_mask(PGRAPHState* pg) {
-    uint8_t mask_alpha = GET_MASK(pg->color_mask, NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE);
-    uint8_t mask_red = GET_MASK(pg->color_mask, NV097_SET_COLOR_MASK_RED_WRITE_ENABLE);
-    uint8_t mask_green = GET_MASK(pg->color_mask, NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE);
-    uint8_t mask_blue = GET_MASK(pg->color_mask, NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE);
-    /* XXX: What happens if mask_* is not 0x00 or 0x01? */
-    glColorMask(mask_red==0x00?GL_FALSE:GL_TRUE,
-                mask_green==0x00?GL_FALSE:GL_TRUE,
-                mask_blue==0x00?GL_FALSE:GL_TRUE,
-                mask_alpha==0x00?GL_FALSE:GL_TRUE);
+
+static inline uint32_t map_method_to_register_func(uint32_t method_func) {
+    switch(method_func) {
+    case NV097_FUNC_NEVER:
+        return NV_PGRAPH_FUNC_NEVER;
+    case NV097_FUNC_LESS:
+        return NV_PGRAPH_FUNC_LESS;
+    case NV097_FUNC_EQUAL:
+        return NV_PGRAPH_FUNC_EQUAL;
+    case NV097_FUNC_LEQUAL:
+        return NV_PGRAPH_FUNC_LEQUAL;
+    case NV097_FUNC_GREATER:
+        return NV_PGRAPH_FUNC_GREATER;
+    case NV097_FUNC_NOTEQUAL:
+        return NV_PGRAPH_FUNC_NOTEQUAL;
+    case NV097_FUNC_GEQUAL:
+        return NV_PGRAPH_FUNC_GEQUAL;
+    case NV097_FUNC_ALWAYS:
+        return NV_PGRAPH_FUNC_ALWAYS;
+    default:
+        assert(0);
+    }
 }
 
-void update_gl_stencil_mask(PGRAPHState* pg) {
-    GLuint gl_mask = GET_MASK(pg->regs[NV_PGRAPH_CONTROL_1],
-                              NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE);
-    glStencilMask(gl_mask);
+static inline uint32_t map_method_to_register_stencil_op(
+    uint32_t method_stencil_op)
+{
+    switch(method_stencil_op) {
+    case NV097_SET_STENCIL_OP_KEEP:
+        return NV_PGRAPH_STENCIL_OP_KEEP;
+    case NV097_SET_STENCIL_OP_ZERO:
+        return NV_PGRAPH_STENCIL_OP_ZERO;
+    case NV097_SET_STENCIL_OP_REPLACE:
+        return NV_PGRAPH_STENCIL_OP_REPLACE;
+    case NV097_SET_STENCIL_OP_INCRSAT:
+        return NV_PGRAPH_STENCIL_OP_INCRSAT;
+    case NV097_SET_STENCIL_OP_DECRSAT:
+        return NV_PGRAPH_STENCIL_OP_DECRSAT;
+    case NV097_SET_STENCIL_OP_INVERT:
+        return NV_PGRAPH_STENCIL_OP_INVERT;
+    case NV097_SET_STENCIL_OP_INCR:
+        return NV_PGRAPH_STENCIL_OP_INCR;
+    case NV097_SET_STENCIL_OP_DECR:
+        return NV_PGRAPH_STENCIL_OP_DECR;
+    default:
+        assert(0);
+    }
 }
 
-void update_gl_depth_mask(PGRAPHState* pg) {
-    glDepthMask(pg->depth_mask?GL_TRUE:GL_FALSE);
+static inline uint32_t map_register_to_gl_stencil_op(
+    uint32_t register_stencil_op)
+{
+    switch(register_stencil_op) {
+    case NV_PGRAPH_STENCIL_OP_KEEP:
+        return GL_KEEP;
+    case NV_PGRAPH_STENCIL_OP_ZERO:
+        return GL_ZERO;
+    case NV_PGRAPH_STENCIL_OP_REPLACE:
+        return GL_REPLACE;
+    case NV_PGRAPH_STENCIL_OP_INCRSAT:
+        return GL_INCR;
+    case NV_PGRAPH_STENCIL_OP_DECRSAT:
+        return GL_DECR;
+    case NV_PGRAPH_STENCIL_OP_INVERT:
+        return GL_INVERT;
+    case NV_PGRAPH_STENCIL_OP_INCR:
+        return GL_INCR_WRAP;
+    case NV_PGRAPH_STENCIL_OP_DECR:
+        return GL_DECR_WRAP;
+    default:
+        assert(0);
+    }
+}
+
+static inline GLenum map_register_to_gl_func(uint32_t method_func)
+{
+    switch(method_func) {
+    case NV_PGRAPH_FUNC_NEVER:
+        return GL_NEVER;
+    case NV_PGRAPH_FUNC_LESS:
+        return GL_LESS;
+    case NV_PGRAPH_FUNC_EQUAL:
+        return GL_EQUAL;
+    case NV_PGRAPH_FUNC_LEQUAL:
+        return GL_LEQUAL;
+    case NV_PGRAPH_FUNC_GREATER:
+        return GL_GREATER;
+    case NV_PGRAPH_FUNC_NOTEQUAL:
+        return GL_NOTEQUAL;
+    case NV_PGRAPH_FUNC_GEQUAL:
+        return GL_GEQUAL;
+    case NV_PGRAPH_FUNC_ALWAYS:
+        return GL_ALWAYS;
+    default:
+        assert(0);
+    }
+}
+
+static inline GLenum map_method_to_gl_func(uint32_t method_func)
+{
+    return map_register_to_gl_func(map_method_to_register_func(method_func));
+}
+
+static inline void update_gl_stencil_test_op(PGRAPHState* pg)
+{
+    if (pg->stencil_test_op_dirty) {
+        glStencilOp(map_register_to_gl_stencil_op(
+                        GET_PG_REG(pg, CONTROL_2, STENCIL_OP_FAIL)),
+                    map_register_to_gl_stencil_op(
+                        GET_PG_REG(pg, CONTROL_2, STENCIL_OP_ZFAIL)),
+                    map_register_to_gl_stencil_op(
+                        GET_PG_REG(pg, CONTROL_2, STENCIL_OP_ZPASS)));
+        pg->stencil_test_op_dirty = false;
+    }
+}
+
+static inline void update_gl_stencil_test_func(PGRAPHState* pg)
+{
+    if (pg->stencil_test_func_dirty) {
+        glStencilFunc(map_register_to_gl_func(
+                          GET_PG_REG(pg, CONTROL_1, STENCIL_FUNC)),
+                      GET_PG_REG(pg, CONTROL_1, STENCIL_REF),
+                      GET_PG_REG(pg, CONTROL_1, STENCIL_MASK_READ));
+        pg->stencil_test_func_dirty = false;
+    }
+}
+
+static inline void update_gl_color_mask(PGRAPHState* pg) {
+    if (pg->color_mask_dirty) {
+        uint8_t mask_alpha = GET_MASK(pg->color_mask, NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE);
+        uint8_t mask_red = GET_MASK(pg->color_mask, NV097_SET_COLOR_MASK_RED_WRITE_ENABLE);
+        uint8_t mask_green = GET_MASK(pg->color_mask, NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE);
+        uint8_t mask_blue = GET_MASK(pg->color_mask, NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE);
+        /* XXX: What happens if mask_* is not 0x00 or 0x01? */
+        glColorMask(mask_red==0x00?GL_FALSE:GL_TRUE,
+                    mask_green==0x00?GL_FALSE:GL_TRUE,
+                    mask_blue==0x00?GL_FALSE:GL_TRUE,
+                    mask_alpha==0x00?GL_FALSE:GL_TRUE);
+        pg->color_mask_dirty = false;
+    }
+}
+
+static inline void update_gl_stencil_mask(PGRAPHState* pg) {
+    if (pg->stencil_mask_dirty) {
+        GLuint gl_mask = GET_PG_REG(pg, CONTROL_1, STENCIL_MASK_WRITE);
+        glStencilMask(gl_mask);
+        pg->stencil_mask_dirty = false;
+    }
+}
+
+static inline void update_gl_depth_mask(PGRAPHState* pg) {
+    if (pg->depth_mask_dirty) {
+        glDepthMask(pg->depth_mask?GL_TRUE:GL_FALSE);
+        pg->depth_mask_dirty = false;
+    }
+}
+
+// Updates a dirty state and its dirty bit, returns the new state
+static inline bool update_gl_state(GLenum cap, bool state, bool* dirty)
+{
+    if (*dirty) {
+        if (state) {
+            glEnable(cap);
+        } else {
+            glDisable(cap);
+        }
+        *dirty = false;
+    }
+    return state;
+}
+
+static inline void update_gl_stencil_test(PGRAPHState* pg) {
+    if (update_gl_state(GL_STENCIL_TEST,
+                        GET_PG_REG(pg, CONTROL_1, STENCIL_TEST_ENABLE),
+                        &pg->stencil_test_enabled_dirty)) {
+        update_gl_stencil_test_func(pg);
+        update_gl_stencil_test_op(pg);
+    }
 }
 
 /* old style (work in parameter) */
@@ -797,24 +963,6 @@ static inline GLenum map_gl_wrap_mode(uint32_t mode) {
         assert(0);
     }
     return gl_mode;
-}
-
-static inline GLenum map_gl_compare_func(uint32_t func)
-{
-    GLenum gl_func;
-    switch(func) {
-        case 0x200: gl_func = GL_NEVER;    break;
-        case 0x201: gl_func = GL_LESS;     break;
-        case 0x202: gl_func = GL_EQUAL;    break;
-        case 0x203: gl_func = GL_LEQUAL;   break;
-        case 0x204: gl_func = GL_GREATER;  break;
-        case 0x205: gl_func = GL_NOTEQUAL; break;
-        case 0x206: gl_func = GL_GEQUAL;   break;
-        case 0x207: gl_func = GL_ALWAYS;   break;
-        default:
-            assert(0);
-    }
-    return gl_func;
 }
 
 static inline void set_gl_blend_func(uint32_t sfactor, uint32_t dfactor) {
@@ -1378,7 +1526,7 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
                     } else {
                         unsigned int pitch = width * f.bytes_per_pixel;
                         uint8_t *unswizzled = g_malloc(height * pitch);
-                        unswizzle_rect(texture_data, width, height, 1,
+                        unswizzle_rect(texture_data, width, height,
                                        unswizzled, pitch, f.bytes_per_pixel);
 
                         glTexImage2D(gl_target, level, f.gl_internal_format,
@@ -1546,7 +1694,7 @@ static GLuint generate_shaders(PGRAPHState* pg, KelvinState* kelvin, ShaderState
         }
 
 #ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
-        debugger_prepare_feedback();
+        debugger_prepare_feedback(program, 0xFFFF+1); // This should be enough?
 #endif
 
     }
@@ -1881,22 +2029,15 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
 
     bool swizzle = (d->pgraph.surface_type == NV097_SET_SURFACE_FORMAT_TYPE_SWIZZLE);
 
-    int w;
-    int h;
-    unsigned int rowl;
+    unsigned int w;
+    unsigned int h;
 
     if (swizzle) {
       w = 1 << d->pgraph.surface_swizzle_width_shift; //FIXME: Can we just use the actual surface dimensions here?!
       h = 1 << d->pgraph.surface_swizzle_height_shift;
-#if 1 //FIXME: Does this also use pitch?
-      rowl = s->pitch / bytes_per_pixel;
-#else
-      rowl = w;
-#endif
     } else {
       w = d->pgraph.clip_width; 
       h = d->pgraph.clip_height; 
-      rowl = s->pitch / bytes_per_pixel;
     }
 
     assert(w <= (s->pitch/bytes_per_pixel));
@@ -1906,7 +2047,7 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
     void* gpu_buffer = data + s->offset;
     void* tmp_buffer;
     if (swizzle) {
-        tmp_buffer = malloc(rowl*h*bytes_per_pixel);
+        tmp_buffer = malloc(s->pitch * h);
     } else {
         tmp_buffer = NULL;
     }
@@ -1922,7 +2063,7 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
         int rl, pa;
         glGetIntegerv(GL_UNPACK_ROW_LENGTH, &rl);
         glGetIntegerv(GL_UNPACK_ALIGNMENT, &pa);
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, rowl);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, s->pitch / bytes_per_pixel);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
         /* glDrawPixels is crazy deprecated, but there really isn't
@@ -1931,11 +2072,9 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
         // If the surface is swizzled we have to unswizzle the CPU data before uploading them
         if (swizzle) {
             unswizzle_rect(gpu_buffer,
-                           w,
-                           h,
-                           1,
+                           w,h,
                            tmp_buffer,
-                           rowl*bytes_per_pixel,
+                           s->pitch,
                            bytes_per_pixel);
         }
 
@@ -1973,24 +2112,21 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
 
         // Make sure we don't overwrite random CPU data between rows
         if (swizzle) {
-            memcpy(tmp_buffer,gpu_buffer,rowl*h*bytes_per_pixel);
+            memcpy(tmp_buffer,gpu_buffer,s->pitch*h);
         }
 
         glo_readpixels(gl_format, gl_type,
-                       bytes_per_pixel, rowl*bytes_per_pixel,
+                       bytes_per_pixel, s->pitch,
                        w, h,
                        swizzle ? tmp_buffer : gpu_buffer);
         assert(glGetError() == GL_NO_ERROR);
 
         /* When reading we have to swizzle the data for the CPU */
         if (swizzle) {
-
             swizzle_rect(tmp_buffer,
-                         rowl*bytes_per_pixel,
+                         w,h,
                          gpu_buffer,
-                         w,
-                         h,
-                         1,
+                         s->pitch,
                          bytes_per_pixel);
         }
 
@@ -2083,15 +2219,13 @@ printf("s->format = 0x%x\n",s->format);
     /* Allow zeta access, then perform the zeta upload or download */
     if (upload) {
         glDepthMask(GL_TRUE);
-        //FIXME: Defer flag..
+        d->pgraph.depth_mask_dirty = true;
         if (has_stencil) {
             glStencilMask(0xFF);
-            //FIXME: Defer flag..
+            d->pgraph.stencil_mask_dirty = true;
         }
     }
     perform_surface_update(d, s, &zeta_dma, upload, zeta_data, gl_format, gl_type, bytes_per_pixel);
-    update_gl_depth_mask(&d->pgraph); //FIXME: Defer..
-    update_gl_stencil_mask(&d->pgraph); //FIXME: Defer..
 
     /* Update dirty flags */
     if (!upload) {
@@ -2165,10 +2299,9 @@ static void pgraph_update_surface_color(NV2A_GPUState *d, bool upload)
     /* Allow color access, then perform the color upload or download */
     if (upload) {
         glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
-        //FIXME: Set defer flag
+        d->pgraph.color_mask_dirty = true;
     }
     perform_surface_update(d, s, &color_dma, upload, color_data, gl_format, gl_type, bytes_per_pixel);
-    update_gl_color_mask(&d->pgraph); //FIXME: Defer..
 
     /* Update dirty flags */
     if (!upload) {
@@ -2241,6 +2374,13 @@ static void pgraph_init(PGRAPHState *pg)
     assert(glo_check_extension((const GLubyte *)
                              "GL_ARB_vertex_array_bgra",
                              extensions));
+
+#ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
+    assert(glo_check_extension((const GLubyte *)
+                             "GL_EXT_transform_feedback",
+                             extensions));
+#endif
+
 
     GLint max_vertex_attributes;
     glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &max_vertex_attributes);
@@ -2638,19 +2778,52 @@ printf("Set zeta dma object at 0x%x\n",parameter);
         pg->shaders_dirty = true;
         break;
 
+    case NV097_SET_STENCIL_TEST_ENABLE:
+        SET_PG_REG(pg, CONTROL_1, STENCIL_TEST_ENABLE, parameter);
+        pg->stencil_test_enabled_dirty = true;
+        break;
+
+    case NV097_SET_STENCIL_OP_FAIL:
+        SET_PG_REG(pg, CONTROL_2, STENCIL_OP_FAIL,
+                   map_method_to_register_stencil_op(parameter));
+        pg->stencil_test_op_dirty = true;
+        break;
+    case NV097_SET_STENCIL_OP_ZFAIL:
+        SET_PG_REG(pg, CONTROL_2, STENCIL_OP_ZFAIL,
+                   map_method_to_register_stencil_op(parameter));
+        pg->stencil_test_op_dirty = true;
+        break;
+    case NV097_SET_STENCIL_OP_ZPASS:
+        SET_PG_REG(pg, CONTROL_2, STENCIL_OP_ZPASS,
+                   map_method_to_register_stencil_op(parameter));
+        pg->stencil_test_op_dirty = true; 
+        break;
+
+    case NV097_SET_STENCIL_FUNC_REF:
+        SET_PG_REG(pg, CONTROL_1, STENCIL_REF, parameter);
+        pg->stencil_test_func_dirty = true;
+        break;
+    case NV097_SET_STENCIL_FUNC_MASK:
+        SET_PG_REG(pg, CONTROL_1, STENCIL_MASK_READ, parameter);
+        pg->stencil_test_func_dirty = true;
+        break;
+    case NV097_SET_STENCIL_FUNC:
+        SET_PG_REG(pg, CONTROL_1, STENCIL_FUNC,
+                   map_method_to_register_func(parameter));
+        pg->stencil_test_func_dirty = true;
+        break;
     case NV097_SET_COLOR_MASK:
         pg->color_mask = parameter;
-        update_gl_color_mask(pg);
+        pg->color_mask_dirty = true;
         break;
     case NV097_SET_STENCIL_MASK:
         SET_MASK(pg->regs[NV_PGRAPH_CONTROL_1],
                  NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE, parameter);
-        update_gl_stencil_mask(pg);
+        pg->stencil_mask_dirty = true;
         break;
     case NV097_SET_DEPTH_MASK:
         pg->depth_mask = parameter;
-        printf("Set depth mask to 0x%x\n",parameter);
-        update_gl_depth_mask(pg);
+        pg->depth_mask_dirty = true;
         break;
 
     case NV097_SET_CLIP_MIN:
@@ -2926,12 +3099,25 @@ default:
 glViewport(0, 0, w, h);
 static unsigned int draw_call = 0;
 draw_call++;
-printf("%i \t%i: \tClip %ix%i \tVP scale: %fx%f\tAnti alias: %i, Pipeline: %s\n",
+float zclip_max = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMAX];
+float zclip_min = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMIN];
+VertexAttribute* v0 = &kelvin->vertex_attributes[0];
+constant = &kelvin->constants[58];
+#if 0
+printf("%i \t%i: \tCLIP %ix%i [%.3f;%.3f] \tVP: %.3fx%.3fx%.3f\tAA: %i, PL: %s, v0 { count: %i, .type: %i, .norm: %i }\n",
        debugger_frame, draw_call,
-       pg->clip_width,pg->clip_height,
-       *(float*)&constant[58].data[0],*(float*)&constant[58].data[1],
+       pg->clip_width,pg->clip_height, zclip_min, zclip_max,
+       *(float*)&constant->data[0],*(float*)&constant->data[1],*(float*)&constant->data[2],
        pg->surface_anti_aliasing,
-       GET_MASK(pg->regs[NV_PGRAPH_CSV0_D],NV_PGRAPH_CSV0_D_MODE)?"VSH":"FFP");
+       GET_MASK(pg->regs[NV_PGRAPH_CSV0_D],NV_PGRAPH_CSV0_D_MODE)?"VSH":"FFP",
+       v0->count,v0->gl_type,v0->gl_normalize);
+#endif
+
+            update_gl_depth_mask(pg);
+            update_gl_stencil_mask(pg);
+            update_gl_color_mask(pg);
+
+            update_gl_stencil_test(pg);
 
             pgraph_bind_shaders(pg, kelvin);
 
@@ -2944,7 +3130,7 @@ printf("%i \t%i: \tClip %ix%i \tVP scale: %fx%f\tAnti alias: %i, Pipeline: %s\n"
 #ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
             if (GET_MASK(pg->regs[NV_PGRAPH_CSV0_D],
                                   NV_PGRAPH_CSV0_D_MODE) != 0) {
-                debugger_begin_feedback();
+                debugger_begin_feedback(kelvin);
             }
 #endif
 
@@ -3025,8 +3211,8 @@ printf("%i \t%i: \tClip %ix%i \tVP scale: %fx%f\tAnti alias: %i, Pipeline: %s\n"
 #ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
             if (GET_MASK(pg->regs[NV_PGRAPH_CSV0_D],
                          NV_PGRAPH_CSV0_D_MODE) != 0) {
-                if (debugger_end_feedback()) {
-                    debugger_dump_feedback(10,10);
+                if (debugger_end_feedback(kelvin)) {
+                    debugger_dump_feedback(0,10);
                 }
             }
 #endif
@@ -3240,14 +3426,14 @@ printf("%i \t%i: \tClip %ix%i \tVP scale: %fx%f\tAnti alias: %i, Pipeline: %s\n"
             if (parameter & NV097_CLEAR_SURFACE_Z) {
                 gl_mask |= GL_DEPTH_BUFFER_BIT;
                 glDepthMask(GL_TRUE);
+                pg->depth_mask_dirty = true;
                 glClearDepth(gl_clear_depth);
-                //FIXME: Set defer flag
             }
             if (parameter & NV097_CLEAR_SURFACE_STENCIL) {
                 gl_mask |= GL_STENCIL_BUFFER_BIT;
                 glStencilMask(0xFF); /* We have 8 bits maximum anyway */
+                pg->stencil_mask_dirty = true;
                 glClearStencil(gl_clear_stencil);
-                //FIXME: Set defer flag
             }
 
             pg->surface_zeta.draw_dirty = true;
@@ -3263,7 +3449,7 @@ printf("%i \t%i: \tClip %ix%i \tVP scale: %fx%f\tAnti alias: %i, Pipeline: %s\n"
                         (parameter & NV097_CLEAR_SURFACE_G)?GL_TRUE:GL_FALSE,
                         (parameter & NV097_CLEAR_SURFACE_B)?GL_TRUE:GL_FALSE,
                         (parameter & NV097_CLEAR_SURFACE_A)?GL_TRUE:GL_FALSE);
-            //FIXME: Set defer flag
+            pg->color_mask_dirty = true;
 
             glClearColor( ((clear_color >> 16) & 0xFF) / 255.0f, /* red */
                           ((clear_color >> 8) & 0xFF) / 255.0f,  /* green */
@@ -3283,19 +3469,13 @@ printf("%i \t%i: \tClip %ix%i \tVP scale: %fx%f\tAnti alias: %i, Pipeline: %s\n"
                 NV_PGRAPH_CLEARRECTY_YMIN);
         unsigned int ymax = GET_MASK(d->pgraph.regs[NV_PGRAPH_CLEARRECTY],
                 NV_PGRAPH_CLEARRECTY_YMAX);
-        glScissor(xmin, ymin, xmax-xmin, ymax-ymin);
+        glScissor(xmin, ymin, xmax-xmin + 1, ymax-ymin + 1);
         //FIXME: Is this being clipped? If not we need a special case of update_surface
 
         NV2A_GPU_DPRINTF("------------------CLEAR 0x%x %d,%d - %d,%d  %x---------------\n",
             parameter, xmin, ymin, xmax, ymax, d->pgraph.regs[NV_PGRAPH_COLORCLEARVALUE]);
 
         glClear(gl_mask);
-
-        /* The NV2A clear is just a glorified memset so we cleared masks.
-           Restore the actual masks */
-        update_gl_depth_mask(pg); //FIXME: Defer
-        update_gl_stencil_mask(pg); //FIXME: Defer
-        update_gl_color_mask(pg); //FIXME: Defer
 
         glDisable(GL_SCISSOR_TEST);
 
@@ -3412,22 +3592,22 @@ printf("%i \t%i: \tClip %ix%i \tVP scale: %fx%f\tAnti alias: %i, Pipeline: %s\n"
         set_gl_state(GL_CULL_FACE,kelvin->cull_face_enable = parameter);
         break;
 #endif
-#if 0
+#if 1
 //FIXME: 2D seems to be gone because of stupid fixed function emu zbuffer calculation
     case NV097_SET_DEPTH_TEST_ENABLE:
         set_gl_state(GL_DEPTH_TEST,kelvin->depth_test_enable = parameter);
         break;
     case NV097_SET_DEPTH_FUNC:
-        glDepthFunc(map_gl_compare_func(kelvin->depth_func = parameter));
+        glDepthFunc(map_method_to_gl_func(kelvin->depth_func = parameter));
         break;
 #endif
 #if 1
     case NV097_SET_ALPHA_FUNC:
-        glAlphaFunc(map_gl_compare_func(kelvin->alpha_func = parameter),
+        glAlphaFunc(map_method_to_gl_func(kelvin->alpha_func = parameter),
                     kelvin->alpha_ref);
         break;
     case NV097_SET_ALPHA_REF:
-        glAlphaFunc(map_gl_compare_func(kelvin->alpha_func),
+        glAlphaFunc(map_method_to_gl_func(kelvin->alpha_func),
                     kelvin->alpha_ref = *(float*)&parameter);
         break;
     case NV097_SET_BLEND_FUNC_SFACTOR:
