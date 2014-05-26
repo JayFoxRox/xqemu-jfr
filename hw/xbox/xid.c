@@ -187,10 +187,24 @@ static const int gamepad_mapping[] = {
 static void xbox_gamepad_keyboard_event(void *opaque, int keycode)
 {
     USBXIDState *s = opaque;
-#if 1
-    printf("Broken in v2.0.0 because index_from_keycode was removed, on Linux I found no way to query a QKeyCode\n");
-#else
     bool up = keycode & 0x80;
+    uint8_t key = keycode & 0x7F;
+#if 1
+    printf("Broken in v2.0.0 until Gerds new input layer is merged."
+           "Mapping A, B, X and Y to keyboard A, B, X and Y\n");
+    if (key == 0x1e) {
+        s->in_state.bAnalogButtons[GAMEPAD_A] = up?0:0xff;
+    }
+    if (key == 0x30) {
+        s->in_state.bAnalogButtons[GAMEPAD_B] = up?0:0xff;
+    }
+    if (key == 0x2d) {
+        s->in_state.bAnalogButtons[GAMEPAD_X] = up?0:0xff;
+    }
+    if (key == 0x15) {
+        s->in_state.bAnalogButtons[GAMEPAD_Y] = up?0:0xff;
+    }
+#else
     QKeyCode code = index_from_keycode(keycode & 0x7f);
     if (code >= Q_KEY_CODE_MAX) return;
 
