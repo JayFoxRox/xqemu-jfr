@@ -277,10 +277,10 @@ static QString* get_var(struct PixelShader *ps, int reg, bool is_dest)
         break;
     case PS_REGISTER_C0:
         /* TODO: should the final stage really always be unique? */
-        if (ps->flags & PS_COMBINERCOUNT_UNIQUE_C0 || ps->cur_stage == 8) {
+        if (ps->flags & PS_COMBINERCOUNT_UNIQUE_C0 || ps->cur_stage == FINAL_STAGE) {
             QString *reg = qstring_from_fmt("c_%d_%d", ps->cur_stage, 0);
             add_const_ref(ps, qstring_get_str(reg));
-            if (ps->cur_stage == 8) {
+            if (ps->cur_stage == FINAL_STAGE) {
                 ps->final_input.c0_used = true;
             } else {
                 ps->stage[ps->cur_stage].c0_used = true;
@@ -293,10 +293,10 @@ static QString* get_var(struct PixelShader *ps, int reg, bool is_dest)
         }
         break;
     case PS_REGISTER_C1:
-        if (ps->flags & PS_COMBINERCOUNT_UNIQUE_C1 || ps->cur_stage == 8) {
+        if (ps->flags & PS_COMBINERCOUNT_UNIQUE_C1 || ps->cur_stage == FINAL_STAGE) {
             QString *reg = qstring_from_fmt("c_%d_%d", ps->cur_stage, 1);
             add_const_ref(ps, qstring_get_str(reg));
-            if (ps->cur_stage == 8) {
+            if (ps->cur_stage == FINAL_STAGE) {
                 ps->final_input.c1_used = true;
             } else {
                 ps->stage[ps->cur_stage].c1_used = true;
@@ -313,7 +313,7 @@ static QString* get_var(struct PixelShader *ps, int reg, bool is_dest)
     case PS_REGISTER_V0:
         return qstring_from_str("v0");
     case PS_REGISTER_V1:
-        return qstring_from_str("v1");
+        return qstring_from_str(str_v1);
     case PS_REGISTER_T0:
         return qstring_from_str("t0");
     case PS_REGISTER_T1:
@@ -542,7 +542,7 @@ static void add_stage_code(struct PixelShader *ps,
     QString *sum_dest = get_var(ps, output.muxsum, true);
 
     if (qstring_get_length(ab_dest)) {
-        qstring_append_fmt(ps->code, "%s.%s = %s(%s);\n",
+        qstring_append_fmt(ps->code, "  %s.%s = %s(%s);\n",
                            qstring_get_str(ab_dest), write_mask, caster, qstring_get_str(ab_mapping));
     } else {
         QINCREF(ab_mapping);
@@ -550,7 +550,7 @@ static void add_stage_code(struct PixelShader *ps,
     }
 
     if (qstring_get_length(cd_dest)) {
-        qstring_append_fmt(ps->code, "%s.%s = %s(%s);\n",
+        qstring_append_fmt(ps->code, "  %s.%s = %s(%s);\n",
                            qstring_get_str(cd_dest), write_mask, caster, qstring_get_str(cd_mapping));
     } else {
         QINCREF(cd_mapping);
@@ -558,11 +558,11 @@ static void add_stage_code(struct PixelShader *ps,
     }
 
     if (!is_alpha && output.flags & PS_COMBINEROUTPUT_AB_BLUE_TO_ALPHA) {
-        qstring_append_fmt(ps->code, "%s.a = %s.b;\n",
+        qstring_append_fmt(ps->code, "  %s.a = %s.b;\n",
                            qstring_get_str(ab_dest), qstring_get_str(ab_dest));
     }
     if (!is_alpha && output.flags & PS_COMBINEROUTPUT_CD_BLUE_TO_ALPHA) {
-        qstring_append_fmt(ps->code, "%s.a = %s.b;\n",
+        qstring_append_fmt(ps->code, "  %s.a = %s.b;\n",
                            qstring_get_str(cd_dest), qstring_get_str(cd_dest));
     }
 
