@@ -1,3 +1,4 @@
+obj-y += xxhash.o
 obj-y += xbox.o chihiro.o
 obj-y += xbox_pci.o acpi_xbox.o
 obj-y += amd_smbus.o smbus_xbox_smc.o smbus_cx25871.o smbus_adm1032.o
