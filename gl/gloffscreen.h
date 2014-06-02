@@ -33,11 +33,8 @@
 #include <OpenGL/gl.h>
 #elif defined(_WIN32)
 #include <GL/glew.h>
-#include <GL/gl.h>
-#include <GL/glext.h>
 #else
-#include <GL/gl.h>
-#include <GL/glext.h>
+#include <GL/glew.h>
 #endif
 
 /* Used to hold data for the OpenGL context */

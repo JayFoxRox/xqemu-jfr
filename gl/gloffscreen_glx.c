@@ -63,15 +63,8 @@ GloContext *glo_context_create(int formatFlags)
     int rgbaBits[4];
     glo_flags_get_rgba_bits(formatFlags, rgbaBits);
 
+    /* We create a renderbuffer, so we don't care about this */
     int fb_attribute_list[] = {
-        GLX_RENDER_TYPE, GLX_RGBA_BIT,
-        GLX_RED_SIZE, rgbaBits[0],
-        GLX_GREEN_SIZE, rgbaBits[1],
-        GLX_BLUE_SIZE, rgbaBits[2],
-        GLX_ALPHA_SIZE, rgbaBits[3],
-        GLX_DEPTH_SIZE, glo_flags_get_depth_bits(formatFlags),
-        GLX_STENCIL_SIZE, glo_flags_get_stencil_bits(formatFlags),
-        GLX_DRAWABLE_TYPE, GLX_PBUFFER_BIT,
         None
     };
 
@@ -80,12 +73,16 @@ GloContext *glo_context_create(int formatFlags)
     if (configs == NULL) { return NULL; }
     if (nelements == 0) { return NULL; }
 
+    /* Create GLX context */
+    context->glx_context = glXCreateNewContext(x_display, configs[0], GLX_RGBA_TYPE, NULL, True);
+    if (context->glx_context == NULL) { return NULL; }
+
 #if 1
-    /* Tiny surface because apitrace doesn't handle no surface yet */
+    /* Tiny surface because apitrace (or GLX?) doesn't handle surfaceless yet */
     int surface_attribute_list[] = {
-        GLX_PBUFFER_WIDTH,16,
-        GLX_PBUFFER_HEIGHT,16,
-        GLX_LARGEST_PBUFFER, True,
+        GLX_PBUFFER_WIDTH, 32,
+        GLX_PBUFFER_HEIGHT, 32,
+        GLX_LARGEST_PBUFFER, False,
         None
     };
     context->glx_drawable = glXCreatePbuffer(x_display, configs[0], surface_attribute_list);
@@ -94,9 +91,9 @@ GloContext *glo_context_create(int formatFlags)
     context->glx_drawable = None;
 #endif
 
-    /* Create GLX context */
-    context->glx_context = glXCreateNewContext(x_display, configs[0], GLX_RGBA_TYPE, NULL, True);
-    if (context->glx_context == NULL) return NULL;
+    XFree( configs );
+    XSync( x_display, False );
+
     glo_set_current(context);
 
     if (!initialized) {
