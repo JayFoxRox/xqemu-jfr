@@ -68,10 +68,8 @@ typedef struct XIDGamepadReport {
 typedef struct XIDGamepadOutputReport {
     uint8_t report_id; //FIXME: is this correct?
     uint8_t length;
-    uint8_t pad1;
-    uint8_t	left_actuator_strength;
-    uint8_t pad2;
-    uint8_t right_actuator_strength;
+    uint16_t left_actuator_strength;
+    uint16_t right_actuator_strength;
 } QEMU_PACKED XIDGamepadOutputReport;
 
 
@@ -190,19 +188,29 @@ static void xbox_gamepad_keyboard_event(void *opaque, int keycode)
     bool up = keycode & 0x80;
     uint8_t key = keycode & 0x7F;
 #if 1
-    printf("Broken in v2.0.0 until Gerds new input layer is merged."
-           "Mapping A, B, X and Y to keyboard A, B, X and Y\n");
     if (key == 0x1e) {
         s->in_state.bAnalogButtons[GAMEPAD_A] = up?0:0xff;
-    }
-    if (key == 0x30) {
+    } else if (key == 0x30) {
         s->in_state.bAnalogButtons[GAMEPAD_B] = up?0:0xff;
-    }
-    if (key == 0x2d) {
+    } else if (key == 0x2d) {
         s->in_state.bAnalogButtons[GAMEPAD_X] = up?0:0xff;
-    }
-    if (key == 0x15) {
+    } else if (key == 0x15) {
         s->in_state.bAnalogButtons[GAMEPAD_Y] = up?0:0xff;
+    } else if (key == 0x26) {
+        s->in_state.bAnalogButtons[GAMEPAD_LEFT_TRIGGER] = up?0:0xff;
+    } else if (key == 0x13) {
+        s->in_state.bAnalogButtons[GAMEPAD_RIGHT_TRIGGER] = up?0:0xff;
+    } else if (key == 0x1c) {
+        uint16_t mask = (1 << (GAMEPAD_START-GAMEPAD_DPAD_UP));
+        s->in_state.wButtons &= ~mask;
+        if (!up) s->in_state.wButtons |= mask;
+    } else if (key == 0x0e) {
+        uint16_t mask = (1 << (GAMEPAD_BACK-GAMEPAD_DPAD_UP));
+        s->in_state.wButtons &= ~mask;
+        if (!up) s->in_state.wButtons |= mask;
+    } else {
+        printf("Broken in v2.0.0 until Gerds new input layer is merged."
+               "Mapping Start (Enter), Back (Backspace), LT (L), RT (R), A, B, X and Y to keyboard.\n");
     }
 #else
     QKeyCode code = index_from_keycode(keycode & 0x7f);
@@ -267,9 +275,13 @@ static void usb_xid_handle_control(USBDevice *dev, USBPacket *p,
             memcpy(&s->out_state, data, 2);
             assert(s->out_state.length == sizeof(s->out_state));
             assert(s->out_state.length <= length);
-            memcpy(&s->out_state, data, s->out_state.length);
-            assert(s->out_state.pad1 == 0x00);
-            assert(s->out_state.pad2 == 0x00);
+            memcpy(((uintptr_t)&s->out_state) + 2,
+                   ((uintptr_t)data) + 2,
+                   s->out_state.length - 2);
+            //FIXME: Check actuator endianess
+            printf("Set rumble power to 0x%x, 0x%x\n",
+                   s->out_state.left_actuator_strength,
+                   s->out_state.right_actuator_strength);
             p->actual_length = s->out_state.length;
         } else {
             assert(false);
