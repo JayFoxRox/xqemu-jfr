@@ -43,6 +43,7 @@
 #define NV_KELVIN_PRIMITIVE                              0x0097
 #   define NV097_NO_OPERATION                                 0x00970100
 #   define NV097_WAIT_FOR_IDLE                                0x00970110
+#   define NV097_FLIP_INCREMENT_WRITE                         0x0097012c
 #   define NV097_FLIP_STALL                                   0x00970130
 #   define NV097_SET_CONTEXT_DMA_NOTIFIES                     0x00970180
 #   define NV097_SET_CONTEXT_DMA_A                            0x00970184
@@ -92,19 +93,23 @@
 #   define NV097_SET_COMBINER_SPECULAR_FOG_CW0                0x00970288
 #   define NV097_SET_COMBINER_SPECULAR_FOG_CW1                0x0097028C
 #   define NV097_SET_FOG_COLOR                                0x009702a8
+#       define NV097_SET_FOG_COLOR_RED                            0x000000FF
+#       define NV097_SET_FOG_COLOR_GREEN                          0x0000FF00
+#       define NV097_SET_FOG_COLOR_BLUE                           0x00FF0000
+#       define NV097_SET_FOG_COLOR_ALPHA                          0xFF000000
+#   define NV097_SET_FOG_MODE                                 0x0097029c
+#       define NV097_SET_FOG_MODE_LINEAR                          0x00002601
+#       define NV097_SET_FOG_MODE_EXP                             0x00000800
+#       define NV097_SET_FOG_MODE_EXP2                            0x00000801
+#       define NV097_SET_FOG_MODE_EXP_ABS                         0x00000802
+#       define NV097_SET_FOG_MODE_EXP2_ABS                        0x00000803
+#       define NV097_SET_FOG_MODE_LINEAR_ABS                      0x00000804
+#   define NV097_SET_FOG_ENABLE                               0x009702a4 /* Bool */
 #   define NV097_SET_COLOR_MASK                               0x00970358
-#       define NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE            0xFF000000
-#           define NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE_FALSE           0x00
-#           define NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE_TRUE            0x01
-#       define NV097_SET_COLOR_MASK_RED_WRITE_ENABLE              0x00FF0000
-#           define NV097_SET_COLOR_MASK_RED_WRITE_ENABLE_FALSE             0x00
-#           define NV097_SET_COLOR_MASK_RED_WRITE_ENABLE_TRUE              0x01
-#       define NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE            0x0000FF00
-#           define NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE_FALSE           0x00
-#           define NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE_TRUE            0x01
-#       define NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE             0x000000FF
-#           define NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE_FALSE            0x00
-#           define NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE_TRUE             0x01
+#       define NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE            0xFF000000 /* Bool */
+#       define NV097_SET_COLOR_MASK_RED_WRITE_ENABLE              0x00FF0000 /* Bool */
+#       define NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE            0x0000FF00 /* Bool */
+#       define NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE             0x000000FF /* Bool */
 #   define NV097_SET_CLIP_MIN                                 0x00970394
 #   define NV097_SET_CLIP_MAX                                 0x00970398
 #   define NV097_SET_TEXTURE_MATRIX_ENABLE                    0x00970420 /* 4 Slots, bool */
@@ -121,19 +126,61 @@
 #   define NV097_SET_VIEWPORT_SCALE                           0x00970AF0
 #   define NV097_SET_TRANSFORM_PROGRAM                        0x00970B00
 #   define NV097_SET_TRANSFORM_CONSTANT                       0x00970B80
-#   define NV097_SET_VERTEX4F                                 0x00971518
+
+// ? are probably 16 bit values, 2 per method. But are they signed? unsigned? float?
+#   define NV097_SET_VERTEX3F                                 0x00971500 /* 3 floats */
+#   define NV097_SET_VERTEX4F                                 0x00971518 /* 4 floats */
+#   define NV097_SET_VERTEX4S                                 0x00971528 /* 2 ? */
+#   define NV097_SET_NORMAL3F                                 0x00971530 /* 3 floats */
+#   define NV097_SET_NORMAL3S                                 0x00971540 /* 2 ? */
+#   define NV097_SET_DIFFUSE_COLOR4F                          0x00971550 /* 4 floats */
+#   define NV097_SET_DIFFUSE_COLOR3F                          0x00971560 /* 3 floats */
+#   define NV097_SET_DIFFUSE_COLOR4UB                         0x0097156c /* 1 DWORD */
+#   define NV097_SET_SPECULAR_COLOR4F                         0x00971570 /* 4 floats */
+#   define NV097_SET_SPECULAR_COLOR3F                         0x00971580 /* 3 floats */
+#   define NV097_SET_SPECULAR_COLOR4UB                        0x0097158c /* 1 DWORD */
+#   define NV097_SET_TEXCOORD0_2F                             0x00971590 /* 2 floats */
+#   define NV097_SET_TEXCOORD0_2S                             0x00971598 /* 1 ? */
+#   define NV097_SET_TEXCOORD0_4F                             0x009715a0 /* 4 floats */
+#   define NV097_SET_TEXCOORD0_4S                             0x009715b0 /* 2 ? */
+#   define NV097_SET_TEXCOORD1_2F                             0x009715b8 /* 2 floats */
+#   define NV097_SET_TEXCOORD1_2S                             0x009715c0 /* 1 ? */
+#   define NV097_SET_TEXCOORD1_4F                             0x009715c8 /* 4 floats */
+#   define NV097_SET_TEXCOORD1_4S                             0x009715d8 /* 2 ? */
+#   define NV097_SET_TEXCOORD2_2F                             0x009715e0 /* 2 floats */
+#   define NV097_SET_TEXCOORD2_2S                             0x009715e8 /* 1 ? */
+#   define NV097_SET_TEXCOORD2_4F                             0x009715f0 /* 4 floats */
+#   define NV097_SET_TEXCOORD2_4S                             0x00971600 /* 2 ? */
+#   define NV097_SET_TEXCOORD3_2F                             0x00971608 /* 2 floats */
+#   define NV097_SET_TEXCOORD3_2S                             0x00971610 /* 1 ?*/
+#   define NV097_SET_TEXCOORD3_4F                             0x00971620 /* 4 floats */
+#   define NV097_SET_TEXCOORD3_4S                             0x00971630 /* 2 ? */
+#   define NV097_SET_FOG1F                                    0x00971698 /* 1 float */
+#   define NV097_SET_WEIGHT1F                                 0x0097169c /* 1 float */
+#   define NV097_SET_WEIGHT2F                                 0x009716a0 /* 2 floats */
+#   define NV097_SET_WEIGHT3F                                 0x009716b0 /* 3 floats */
+#   define NV097_SET_WEIGHT4F                                 0x009716c0 /* 4 floats */
+
 #   define NV097_SET_VERTEX_DATA_ARRAY_OFFSET                 0x00971720
 #   define NV097_SET_VERTEX_DATA_ARRAY_FORMAT                 0x00971760
 #       define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE            0x0000000F
 #           define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_D3D     0
 #           define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_S1         1
 #           define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F          2
-#           define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_OGL     3
+#           define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_OGL     4
 #           define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_S32K       5
 #           define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_CMP        6
 #       define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_SIZE            0x000000F0
 #       define NV097_SET_VERTEX_DATA_ARRAY_FORMAT_STRIDE          0xFFFFFF00
-#   define NV097_SET_BEGIN_END                                0x009717fC
+
+#define NV097_SET_SHADER_CLIP_PLANE_MODE                      0x009717f8
+/* stage 0 { Bit  0: s_gez, Bit  1: t_gez, Bit  2: r_gez, Bit  3: q_gez }
+   stage 1 { Bit  4: s_gez, Bit  5: t_gez, Bit  6: r_gez, Bit  7: q_gez }
+   stage 2 { Bit  8: s_gez, Bit  9: t_gez, Bit 10: r_gez, Bit 11: q_gez }
+   stage 3 { Bit 12: s_gez, Bit 13: t_gez, Bit 14: r_gez, Bit 15: q_gez }
+*/
+
+#   define NV097_SET_BEGIN_END                                0x009717fc
 #       define NV097_SET_BEGIN_END_OP_END                         0x00
 #       define NV097_SET_BEGIN_END_OP_POINTS                      0x01
 #       define NV097_SET_BEGIN_END_OP_LINES                       0x02
@@ -152,12 +199,18 @@
 #       define NV097_DRAW_ARRAYS_COUNT                            0xFF000000
 #       define NV097_DRAW_ARRAYS_START_INDEX                      0x00FFFFFF
 #   define NV097_INLINE_ARRAY                                 0x00971818
-#   define NV097_SET_VERTEX_DATA4UB                           0x00971940
+#   define NV097_SET_EYE_VECTOR                               0x0097181c /* 3 floats */
+#   define NV097_SET_VERTEX_DATA2F_M                          0x00971880 /* 16*2 floats */
+#   define NV097_SET_VERTEX_DATA4F_M                          0x00971a00 /* 16*4 floats */
+#   define NV097_SET_VERTEX_DATA2S                            0x00971900 /* 16 ? */
+#   define NV097_SET_VERTEX_DATA4UB                           0x00971940 /* 16 DWORDs */
+#   define NV097_SET_VERTEX_DATA4S_M                          0x00971980 /* 16*2 ? */
 #   define NV097_SET_TEXTURE_OFFSET                           0x00971B00
 #   define NV097_SET_TEXTURE_FORMAT                           0x00971B04
 #       define NV097_SET_TEXTURE_FORMAT_CONTEXT_DMA               0x00000003
 #       define NV097_SET_TEXTURE_FORMAT_DIMENSIONALITY            0x000000F0
 #       define NV097_SET_TEXTURE_FORMAT_COLOR                     0x0000FF00
+#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_AY8            0x01
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A1R5G5B5       0x02
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_X1R5G5B5       0x03
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A4R4G4B4       0x04
@@ -239,6 +292,19 @@
 #   define NV097_SET_SHADE_MODE                               0x0097037c
 #       define NV097_SET_SHADE_MODE_FLAT                          0x00001D00
 #       define NV097_SET_SHADE_MODE_SMOOTH                        0x00001D01
+
+#   define NV097_SET_CONTROL0                                 0x00970290
+#       define NV097_SET_CONTROL0_COLOR_SPACE_CONVERT             0xF0000000
+#           define NV097_SET_CONTROL0_COLOR_SPACE_CONVERT_PASS          0x0
+#           define NV097_SET_CONTROL0_COLOR_SPACE_CONVERT_CRYCB_TO_RGB  0x1
+#           define NV097_SET_CONTROL0_COLOR_SPACE_CONVERT_SCRYSCB_TO_RGB 0x2
+#       define NV097_SET_CONTROL0_PREMULTIPLIEDALPHA              0x0F000000 /* Bool */
+#       define NV097_SET_CONTROL0_TEXTUREPERSPECTIVE              0x00F00000 /* Bool */
+#       define NV097_SET_CONTROL0_Z_PERSPECTIVE_ENABLE            0x000F0000 /* Bool */
+#       define NV097_SET_CONTROL0_Z_FORMAT                        0x0000FF00
+#           define NV097_SET_CONTROL0_Z_FORMAT_FIXED                  0x00
+#           define NV097_SET_CONTROL0_Z_FORMAT_FLOAT                  0x01
+#       define NV097_SET_CONTROL0_STENCIL_WRITE_ENABLE            0x000000FF
 
 #   define NV097_SET_DEPTH_MASK                               0x0097035c /* Bool */
 #   define NV097_SET_ALPHA_TEST_ENABLE                        0x00970300 /* Bool */

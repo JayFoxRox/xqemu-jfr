@@ -261,6 +261,26 @@
 #define NV_PGRAPH_COMBINECTL                             0x00001940
 #define NV_PGRAPH_COMBINESPECFOG0                        0x00001944
 #define NV_PGRAPH_COMBINESPECFOG1                        0x00001948
+
+#define NV_PGRAPH_CONTROL_0                              0x0000194C
+#       define NV_PGRAPH_CONTROL_0_CSCONVERT                      0xC0000000
+#           define NV_PGRAPH_CONTROL_0_CSCONVERT_PASS               0x0
+#           define NV_PGRAPH_CONTROL_0_CSCONVERT_CRYCB_TO_RGB       0x1
+#           define NV_PGRAPH_CONTROL_0_CSCONVERT_SCRYSCB_TO_RGB     0x2
+#       define NV_PGRAPH_CONTROL_0_BLUE_WRITE_ENABLE              (1 << 29) /* Bool */
+#       define NV_PGRAPH_CONTROL_0_GREEN_WRITE_ENABLE             (1 << 28) /* Bool */
+#       define NV_PGRAPH_CONTROL_0_RED_WRITE_ENABLE               (1 << 27) /* Bool */
+#       define NV_PGRAPH_CONTROL_0_ALPHA_WRITE_ENABLE             (1 << 26) /* Bool */
+#       define NV_PGRAPH_CONTROL_0_STENCIL_WRITE_ENABLE           (1 << 25) /* Bool */
+#       define NV_PGRAPH_CONTROL_0_ZWRITEENABLE                   (1 << 24) /* Bool */
+#       define NV_PGRAPH_CONTROL_0_Z_PERSPECTIVE_ENABLE           (1 << 23) /* Bool */
+#       define NV_PGRAPH_CONTROL_0_DITHERENABLE                   (1 << 22) /* Bool */
+#       define NV_PGRAPH_CONTROL_0_ZFUNC                          0x000F0000 /* Compare func */
+#       define NV_PGRAPH_CONTROL_0_ZENABLE                        (1 << 14) /* Bool */
+#       define NV_PGRAPH_CONTROL_0_ALPHATESTENABLE                (1 << 12) /* Bool */
+#       define NV_PGRAPH_CONTROL_0_ALPHAFUNC                      0x00000F00
+#       define NV_PGRAPH_CONTROL_0_ALPHAREF                       0x000000FF
+
 #define NV_PGRAPH_CONTROL_1                              0x00001950
 #       define NV_PGRAPH_CONTROL_1_STENCIL_TEST_ENABLE            0x00000001
 #       define NV_PGRAPH_CONTROL_1_STENCIL_FUNC                   0x000000F0
@@ -268,7 +288,7 @@
 #       define NV_PGRAPH_CONTROL_1_STENCIL_MASK_READ              0x00FF0000
 #       define NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE             0xFF000000
 
-// Used by NV_PGRAPH_CONTROL_1_STENCIL_FUNC
+// Used by NV_PGRAPH_CONTROL_1_STENCIL_FUNC, NV_PGRAPH_CONTROL_0_{ALPHAFUNC,ZFUNC}
 #           define NV_PGRAPH_FUNC_NEVER           0x0
 #           define NV_PGRAPH_FUNC_LESS            0x1
 #           define NV_PGRAPH_FUNC_EQUAL           0x2
@@ -283,7 +303,7 @@
 #       define NV_PGRAPH_CONTROL_2_STENCIL_OP_ZFAIL               0x000000F0
 #       define NV_PGRAPH_CONTROL_2_STENCIL_OP_ZPASS               0x00000F00
 
-// Used by NV_PGRAPH_STENCIL_OP_FAIL, NV_PGRAPH_STENCIL_OP_ZFAIL, NV_PGRAPH_STENCIL_OP_ZPASS
+// Used by NV_PGRAPH_STENCIL_OP_{FAIL,ZFAIL,ZPASS}
 #           define NV_PGRAPH_STENCIL_OP_KEEP      0x1
 #           define NV_PGRAPH_STENCIL_OP_ZERO      0x2
 #           define NV_PGRAPH_STENCIL_OP_REPLACE   0x3
@@ -292,6 +312,34 @@
 #           define NV_PGRAPH_STENCIL_OP_INVERT    0x6
 #           define NV_PGRAPH_STENCIL_OP_INCR      0x7
 #           define NV_PGRAPH_STENCIL_OP_DECR      0x8
+
+#define NV_PGRAPH_CONTROL_3                              0x00001958
+#       define NV_PGRAPH_CONTROL_3_PREMULTALPHA                 (1 << 2)
+#       define NV_PGRAPH_CONTROL_3_TEXTUREPERSPECTIVE           (1 << 6)
+#       define NV_PGRAPH_CONTROL_3_FOGENABLE                    (1 << 8)
+#       define NV_PGRAPH_CONTROL_3_FOG_MODE                     0x00070000
+#           define NV_PGRAPH_CONTROL_3_FOG_MODE_LINEAR              0x0
+#           define NV_PGRAPH_CONTROL_3_FOG_MODE_EXP                 0x1
+#           define NV_PGRAPH_CONTROL_3_FOG_MODE_EXP2                0x3
+#           define NV_PGRAPH_CONTROL_3_FOG_MODE_LINEAR_ABS          0x4
+#           define NV_PGRAPH_CONTROL_3_FOG_MODE_EXP_ABS             0x5
+#           define NV_PGRAPH_CONTROL_3_FOG_MODE_EXP2_ABS            0x7
+//XXX: Unfinished
+
+#define NV_PGRAPH_FOGCOLOR                               0x00001980
+#       define NV_PGRAPH_FOGCOLOR_BLUE                          0x000000FF
+#       define NV_PGRAPH_FOGCOLOR_GREEN                         0x0000FF00
+#       define NV_PGRAPH_FOGCOLOR_RED                           0x00FF0000
+#       define NV_PGRAPH_FOGCOLOR_ALPHA                         0xFF000000
+
+#define NV_PGRAPH_SETUPRASTER                            0x00001990
+#       define NV_PGRAPH_SETUPRASTER_Z_FORMAT                     (1 << 29)
+#           define NV_PGRAPH_SETUPRASTER_Z_FORMAT_FIXED             0x0
+#           define NV_PGRAPH_SETUPRASTER_Z_FORMAT_FLOAT             0x1
+//XXX: Unfinished
+
+#define NV_PGRAPH_SHADERCLIPMODE                         0x00001994
+/* Same format as NV097_SET_SHADER_CLIP_PLANE_MODE */
 
 #define NV_PGRAPH_SHADERCTL                              0x00001998
 #define NV_PGRAPH_SHADERPROG                             0x0000199C
