@@ -207,7 +207,7 @@ static const ColorFormatInfo kelvin_color_format_map[66] = {
 
     /* TODO: 8-bit palettized textures */
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_I8_A8R8G8B8] =
-        {1, false, GL_LUMINANCE8, GL_LUMINANCE, GL_UNSIGNED_BYTE },
+        {1, false, GL_RGBA, GL_COLOR_INDEX, GL_UNSIGNED_BYTE }, /*FIXME: glColorTable or do this in a conversion function, this also means conversion functions must be able to modify the hash or dirty regions */
 
     [NV097_SET_TEXTURE_FORMAT_COLOR_L_DXT1_A1R5G5B5] =
         {4, false, GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 0, GL_RGBA},
@@ -222,10 +222,12 @@ static const ColorFormatInfo kelvin_color_format_map[66] = {
         {4, true, GL_RGBA, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV},
     /* TODO: how do opengl alpha textures work? */
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8] =
-        {2, false, GL_RED,  GL_RED,  GL_UNSIGNED_BYTE},
+        {1, false, GL_ALPHA,  GL_ALPHA,  GL_UNSIGNED_BYTE},
+    [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_AY8] = /* FIXME: Unsure if AY8 is A4Y4 or A8Y8? Used in conker demo at startup for fonts */
+        {2, false, GL_LUMINANCE_ALPHA, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE },
     [NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_X8R8G8B8] =
         {4, true, GL_RGB,  GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV},
-    [NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_Y16_FIXED] =
+    [NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_Y16_FIXED] = /* FIXME: What is this? Isn't this depth + luminance? */
         {2, true, GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT},
     [NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8B8G8R8] =
         {4, false, GL_RGBA, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV},
