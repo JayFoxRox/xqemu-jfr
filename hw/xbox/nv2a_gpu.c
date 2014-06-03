@@ -277,11 +277,21 @@ static const ColorFormatInfo kelvin_color_format_map[66] = {
 
 #define SET_PG_REG(pg, v, mask, val) SET_MASK(pg->regs[NV_PGRAPH_ ## v], NV_PGRAPH_ ## v ## _ ## mask, val)
 
-#define CASE_4(v, step)                                              \
-    case (v):                                                        \
+#define CASE_2(v, step)                                              \
     case (v)+(step):                                                 \
+    case (v)
+
+#define CASE_3(v, step)                                              \
     case (v)+(step)*2:                                               \
-    case (v)+(step)*3
+    CASE_2(v, step)
+
+#define CASE_4(v, step)                                              \
+    case (v)+(step)*3:                                               \
+    CASE_3(v, step)
+
+#define CASE_RANGE(v, count)                                         \
+    case (v) ... ((v)+((count)-1)*4):                                \
+        slot = (class_method - (v)) / 4;
 
 
 enum FifoMode {
