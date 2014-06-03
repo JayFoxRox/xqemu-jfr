@@ -394,6 +394,8 @@ static QString* decode_opcode_input(uint32_t *shader_token,
      * determined */
     char tmp[40];
     switch (param) {
+case 0:
+printf("output tpe 0, reg 0x%x ?! Mapping to PARAM_R\n", reg_num);
     case PARAM_R:
         snprintf(tmp, sizeof(tmp), "R%d", reg_num);
         break;
@@ -411,7 +413,7 @@ static QString* decode_opcode_input(uint32_t *shader_token,
         break;
     default:
         printf("Param: 0x%x\n", param);
-        assert(false);
+        assert(0);
     }
     qstring_append(ret_str, tmp);
 
@@ -942,12 +944,29 @@ QString* vsh_translate(uint16_t version,
         "\n"
 #endif
 
-        // Espes experimental
         "  /* Un-screenspace transform */\n"
+#if 0
+        // Espes experimental
         "  oPos.x = (oPos.x - viewport_offset.x) / viewport_scale.x;\n"
         "  oPos.y = (oPos.y - viewport_offset.y) / viewport_scale.y;\n"
-        "  oPos.z = (oPos.z - 0.5 * (cliprange.x + cliprange.y)) / (0.5 * (cliprange.y - cliprange.x));\n"
+"  oPos.z = (oPos.z - 0.5 * (clipRange.x + clipRange.y)) / (0.5 * (clipRange.y - clipRange.x));\n"
+ 
+"  if (oPos.w <= 0.0) {\n"
+"    oPos.xyz *= oPos.w;\n"
+"  } else {\n"
+"    oPos.w = 1.0;\n"
+"  }\n"
+#else
+        // Fox experimental
+        "  oPos.x = (oPos.x - viewport_offset.x) / viewport_scale.x;\n"
+        "  oPos.y = (oPos.y - viewport_offset.y) / viewport_scale.y;\n"
+        "  oPos.z = (oPos.z - viewport_offset.z) / max(viewport_scale.z,0.00001);\n" //FIXME: Just avoid division by zero somehow..
         "  oPos.w = sign(oPos.w);\n"
+//        "  oPos.z *= 0.5; oPos.z += 0.5;"
+//        "  oPos.z = (oPos.z - (cliprange.x / 16777215.0)) / ((cliprange.y - cliprange.x) / 16777215.0);\n"
+//        "  oPos.z *= 2.0; oPos.z -= 1.0;"
+#endif
+//        "  oPos.w = 1.0;\n"
         "\n"
 
         /* Z coord [0;1]->[-1;1] mapping, see comment in transform_projection

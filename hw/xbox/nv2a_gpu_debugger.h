@@ -1,4 +1,31 @@
-static unsigned int debugger_frame = 1;
+static unsigned int debugger_frame = 0; /* apitrace also starts at "Frame 0" */
+
+static void debugger_label(GLenum identifier, GLuint name, const char* fmt, ...) {
+
+    static bool initialized = false;
+    static void(*imported_glObjectLabelKHR)(GLenum identifier, GLuint name, GLsizei length, const char *label) = NULL;
+    if (!initialized) {
+        const GLubyte *extensions = glGetString(GL_EXTENSIONS);
+        if (glo_check_extension((const GLubyte *)"GL_KHR_debug",extensions)) {
+            imported_glObjectLabelKHR = glo_get_extension_proc((const GLubyte *)"glObjectLabel");
+        }
+        initialized = true;
+    }
+    if (!imported_glObjectLabelKHR) {
+        return;
+    }
+
+    char buffer[512];
+    va_list args;
+    va_start (args, fmt);
+    vsprintf (buffer, fmt, args);
+
+    assert(glGetError()==GL_NO_ERROR);
+    imported_glObjectLabelKHR(identifier, name, -1, buffer);
+    while(glGetError()!=GL_NO_ERROR); //FIXME: This is necessary because GLX does always return a proc currently..
+
+    va_end (args);
+}
 
 static void debugger_message(const char* fmt, ...) {
     char buffer[512];
@@ -72,19 +99,19 @@ static const gl_primitive_class_map[] = {
     [GL_POLYGON] = -1
 };
 
-static bool debugger_begin_feedback(KelvinState* kelvin) {
+static bool debugger_begin_feedback(PGRAPHState* pg) {
     assert(glGetError() == 0);
-    if (gl_primitive_class_map[kelvin->gl_primitive_mode] != -1) {
-        glBeginTransformFeedbackEXT(gl_primitive_class_map[kelvin->gl_primitive_mode]);
+    if (gl_primitive_class_map[pg->gl_primitive_mode] != -1) {
+        glBeginTransformFeedbackEXT(gl_primitive_class_map[pg->gl_primitive_mode]);
         assert(glGetError() == 0);
         return true;
     }
     return false;
 }
 
-static bool debugger_end_feedback(KelvinState* kelvin) {
+static bool debugger_end_feedback(PGRAPHState* pg) {
     assert(glGetError() == 0);
-    if (gl_primitive_class_map[kelvin->gl_primitive_mode] != -1) {
+    if (gl_primitive_class_map[pg->gl_primitive_mode] != -1) {
         assert(glGetError() == 0);
         glEndTransformFeedbackEXT();
         return true;
@@ -116,7 +143,7 @@ static void debugger_dump_feedback(unsigned int vertex_start, unsigned int verte
 
 #endif
 
-static void debugger_export_vertex_shader(const char* file, KelvinState* kelvin, bool standalone) {
+static void debugger_export_vertex_shader(const char* file, PGRAPHState* pg, bool standalone) {
     int i;
     GLint prog;
     glGetIntegerv(GL_CURRENT_PROGRAM,&prog);
@@ -154,7 +181,7 @@ static void debugger_export_vertex_shader(const char* file, KelvinState* kelvin,
         fprintf(f,"\n"
                   "void setup(void) {\n");
         for (i = 0; i < 192; i++) {
-            float* c = kelvin->constants[i].data;
+            float* c = pg->constants[i].data;
             if (!((c[0] == c[1]) && (c[1] == c[2]) && (c[2] == c[3]) && (fabsf(c[3]) <= 1.0e-20f))) {
                 fprintf(f,"  c[%d] = vec4(%f, %f, %f, %f);\n",i,c[0],c[1],c[2],c[3]);
             }

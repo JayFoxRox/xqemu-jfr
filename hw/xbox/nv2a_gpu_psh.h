@@ -31,6 +31,7 @@ QString *psh_translate(uint32_t combiner_control, uint32_t shader_stage_program,
                        /*uint32_t constant_0[8], uint32_t constant_1[8],*/
                        uint32_t final_inputs_0, uint32_t final_inputs_1,
                        /*uint32_t final_constant_0, uint32_t final_constant_1,*/
-                       bool rect_tex[4]);
+                       bool rect_tex[4], bool compare_mode[4][4],
+                       bool alphakill[4]);
 
 #endif

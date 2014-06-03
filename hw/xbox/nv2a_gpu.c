@@ -36,9 +36,18 @@
 #include "hw/xbox/nv2a_gpu_psh.h"
 #include "hw/xbox/nv2a_gpu.h"
 
+//#define LP // Future feature, ignore this for now
+#ifdef LP
+#include "launch_program.fox"
+#endif
+
+//Hack: this will ignore clip_x and clip_y, sonic heroes e3 is a good test case for this for now, it's the only software I'm aware of that does this yet
+#define FORCE_NOXY
+#define CHECKXY(pg) { printf("Clip with XY: %d x %d at %d, %d\n",(pg)->clip_width,(pg)->clip_height,(pg)->clip_x,(pg)->clip_y); }
+
 #define DEBUG_NV2A_GPU_DISABLE_MIPMAP
 //#define DEBUG_NV2A_GPU_EXPORT
-//#define DEBUG_NV2A_GPU
+#define DEBUG_NV2A_GPU
 #ifdef DEBUG_NV2A_GPU
 # define NV2A_GPU_DPRINTF(format, ...)       printf("nv2a: " format, ## __VA_ARGS__)
 #else
@@ -62,11 +71,6 @@ const char** feedback_varyings[] = {
   "debug_oPos"
 };
 #endif
-
-/* 4096 x 4096 renderbuffers */
-#define FB_W ((1 << 12)/2)
-#define FB_H ((1 << 12)/4)
-
 
 #define GLSL_LOG_LENGTH 8192
 
@@ -344,6 +348,7 @@ typedef struct VertexAttribute {
     unsigned int converted_size;
     unsigned int converted_count;
 
+    GLenum gl_size;
     GLenum gl_type;
     GLboolean gl_normalize;
 } VertexAttribute;
@@ -356,8 +361,6 @@ typedef struct VertexShaderConstant {
 typedef struct VertexShader {
     bool dirty;
     uint32_t program_data[NV2A_GPU_MAX_VERTEXSHADER_LENGTH*4]; /* Each instruction is 16 byte */
-
-    GLuint gl_program;
 } VertexShader;
 
 typedef struct Texture {
@@ -367,7 +370,7 @@ typedef struct Texture {
     unsigned int dimensionality;
     unsigned int color_format;
     unsigned int levels;
-    unsigned int log_width, log_height;
+    unsigned int log_width, log_height, log_depth;
 
     unsigned int rect_width, rect_height;
 
@@ -385,6 +388,8 @@ typedef struct Texture {
     bool cylwrap_v;
     bool cylwrap_p;
     bool cylwrap_q;
+
+    bool alphakill;
 
     bool dma_select;
     hwaddr offset;
@@ -407,6 +412,8 @@ typedef struct ShaderState {
     uint32_t alpha_inputs[8], alpha_outputs[8];
 
     bool rect_tex[4];
+    bool compare_mode[4][4];
+    bool alphakill[4];
 
     /* vertex shader */
     guint vertex_shader_hash;
@@ -422,49 +429,19 @@ typedef struct Surface {
 } Surface;
 
 typedef struct InlineVertexBufferEntry {
-    uint32_t position[4];
-    uint32_t diffuse;
+    float v[16][4];
 } InlineVertexBufferEntry;
 
 typedef struct KelvinState {
     hwaddr dma_notifies;
     hwaddr dma_state;
-    hwaddr dma_vertex_a, dma_vertex_b;
     hwaddr dma_semaphore;
     unsigned int semaphore_offset;
 
-    GLenum gl_primitive_mode;
-
-    bool enable_vertex_program_write;
-
-    unsigned int vertexshader_start_slot;
-    unsigned int vertexshader_load_slot;
-    VertexShader vertexshader;
-
-    unsigned int constant_load_slot;
-    VertexShaderConstant constants[NV2A_GPU_VERTEXSHADER_CONSTANTS];
-
-    VertexAttribute vertex_attributes[NV2A_GPU_VERTEXSHADER_ATTRIBUTES];
-
-    unsigned int inline_array_length;
-    uint32_t inline_array[NV2A_GPU_MAX_BATCH_LENGTH];
-
-    unsigned int inline_elements_length;
-    uint32_t inline_elements[NV2A_GPU_MAX_BATCH_LENGTH];
-
-    unsigned int inline_buffer_length;
-    InlineVertexBufferEntry inline_buffer[NV2A_GPU_MAX_BATCH_LENGTH];
-
     uint32_t shade_mode;
 
-    bool alpha_test_enable;
     bool blend_enable;
     bool cull_face_enable;
-    bool depth_test_enable;
-
-    uint32_t depth_func;
-    uint32_t alpha_func;
-    float alpha_ref;
 
     uint32_t blend_func_sfactor;
     uint32_t blend_func_dfactor;
@@ -543,6 +520,9 @@ typedef struct PGRAPHState {
     bool channel_valid;
     GraphicsContext context[NV2A_GPU_NUM_CHANNELS];
 
+    int FIXME_REMOVEME_comp_src; /*/ FIXME: REMOVEME! This is to see how
+                                            applications upload the composite
+                                            matrix */
 
     hwaddr dma_color, dma_zeta;
 #ifdef CACHE_DMA
@@ -554,26 +534,49 @@ typedef struct PGRAPHState {
     uint8_t surface_swizzle_width_shift, surface_swizzle_height_shift;
     unsigned int clip_x, clip_y;
     unsigned int clip_width, clip_height;
-    uint32_t color_mask;
-    bool depth_mask;
-
-    uint32_t fog_color;
 
     hwaddr dma_a, dma_b;
     Texture textures[NV2A_GPU_MAX_TEXTURES];
 
-    bool depth_mask_dirty;
-    bool color_mask_dirty;
-    bool stencil_mask_dirty;
-    bool stencil_test_enabled_dirty;
-    bool stencil_test_func_dirty;
-    bool stencil_test_op_dirty;
+    struct {
+        bool depth_mask;
+        bool color_mask;
+        bool stencil_mask;
+        bool depth_test;
+        bool depth_test_func;
+        bool alpha_test;
+        bool alpha_test_func;
+        bool stencil_test;
+        bool stencil_test_func;
+        bool stencil_test_op;
+        bool fog;
+        bool fog_color;
+        bool fog_mode;
+        bool eye_vector;
+        // Prepared but not used
+        bool front_face;
+        bool blend;
+        bool blend_func;
+        bool cull_face;
+        bool cull_face_mode;
+        bool edge_flag;
+        bool framebuffer;
+        // Old flags which might be removed again?
+        bool shaders;
+    } dirty;
 
-    bool shaders_dirty;
-    GHashTable *shader_cache;
+    struct {
+        GHashTable* renderbuffer;
+        GHashTable* framebuffer;
+        // Old cache which will possibly renamed or removed?
+        GHashTable *shader;
+    } cache;
+
     GLuint gl_program;
 
-    float composite_matrix[16];
+    float eye_vector[3];
+
+    float composite_matrix[16]; //FIXME: Should be stored within the constant array?
 
     bool texture_matrix_enable[4];
 
@@ -583,11 +586,32 @@ typedef struct PGRAPHState {
     float texture_matrix3[16];
 
     GloContext *gl_context;
-    GLuint gl_framebuffer;
-    GLuint gl_color_renderbuffer;
-    GLuint gl_zeta_renderbuffer;
+
+    hwaddr dma_vertex_a, dma_vertex_b;
+
     GraphicsSubchannel subchannel_data[NV2A_GPU_NUM_SUBCHANNELS];
 
+    GLenum gl_primitive_mode;
+
+    bool enable_vertex_program_write;
+
+    unsigned int vertexshader_start_slot;
+    unsigned int vertexshader_load_slot;
+    VertexShader vertexshader;
+
+    unsigned int constant_load_slot;
+    VertexShaderConstant constants[NV2A_GPU_VERTEXSHADER_CONSTANTS];
+
+    VertexAttribute vertex_attributes[NV2A_GPU_VERTEXSHADER_ATTRIBUTES];
+
+    unsigned int inline_array_length;
+    uint32_t inline_array[NV2A_GPU_MAX_BATCH_LENGTH];
+
+    unsigned int inline_elements_length;
+    uint32_t inline_elements[NV2A_GPU_MAX_BATCH_LENGTH];
+
+    unsigned int inline_buffer_length;
+    InlineVertexBufferEntry inline_buffer[NV2A_GPU_MAX_BATCH_LENGTH];
 
     uint32_t regs[0x2000];
 } PGRAPHState;
@@ -730,15 +754,26 @@ typedef struct NV2A_GPUState {
 
 } NV2A_GPUState;
 
+#if 1 // Experimental stuff, not public yet, change to #if 0
+#include "nv2a_names.fox"
+#define nv2a_gpu_reg_names nv2a_reg_names
+#define nv2a_gpu_method_names nv2a_method_names
+#else
+static const char* nv2a_gpu_reg_names[] = {};
+static const char* nv2a_gpu_method_names[] = {};
+#endif
 
+static inline void pgraph_update_surfaces(NV2A_GPUState *d, bool upload, bool zeta, bool color); //FIXME: Remove!
 #include "hw/xbox/nv2a_gpu_debugger.h"
+
+//FIXME: Move to top and use c file
+#include "hw/xbox/nv2a_gpu_cache.h"
 
 
 #define NV2A_GPU_DEVICE(obj) \
     OBJECT_CHECK(NV2A_GPUState, (obj), "nv2a")
 
 /* new style (work in function) so we can easily restore the state anytime */
-
 
 static inline uint32_t map_method_to_register_func(uint32_t method_func) {
     switch(method_func) {
@@ -837,65 +872,6 @@ static inline GLenum map_register_to_gl_func(uint32_t method_func)
     }
 }
 
-static inline GLenum map_method_to_gl_func(uint32_t method_func)
-{
-    return map_register_to_gl_func(map_method_to_register_func(method_func));
-}
-
-static inline void update_gl_stencil_test_op(PGRAPHState* pg)
-{
-    if (pg->stencil_test_op_dirty) {
-        glStencilOp(map_register_to_gl_stencil_op(
-                        GET_PG_REG(pg, CONTROL_2, STENCIL_OP_FAIL)),
-                    map_register_to_gl_stencil_op(
-                        GET_PG_REG(pg, CONTROL_2, STENCIL_OP_ZFAIL)),
-                    map_register_to_gl_stencil_op(
-                        GET_PG_REG(pg, CONTROL_2, STENCIL_OP_ZPASS)));
-        pg->stencil_test_op_dirty = false;
-    }
-}
-
-static inline void update_gl_stencil_test_func(PGRAPHState* pg)
-{
-    if (pg->stencil_test_func_dirty) {
-        glStencilFunc(map_register_to_gl_func(
-                          GET_PG_REG(pg, CONTROL_1, STENCIL_FUNC)),
-                      GET_PG_REG(pg, CONTROL_1, STENCIL_REF),
-                      GET_PG_REG(pg, CONTROL_1, STENCIL_MASK_READ));
-        pg->stencil_test_func_dirty = false;
-    }
-}
-
-static inline void update_gl_color_mask(PGRAPHState* pg) {
-    if (pg->color_mask_dirty) {
-        uint8_t mask_alpha = GET_MASK(pg->color_mask, NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE);
-        uint8_t mask_red = GET_MASK(pg->color_mask, NV097_SET_COLOR_MASK_RED_WRITE_ENABLE);
-        uint8_t mask_green = GET_MASK(pg->color_mask, NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE);
-        uint8_t mask_blue = GET_MASK(pg->color_mask, NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE);
-        /* XXX: What happens if mask_* is not 0x00 or 0x01? */
-        glColorMask(mask_red==0x00?GL_FALSE:GL_TRUE,
-                    mask_green==0x00?GL_FALSE:GL_TRUE,
-                    mask_blue==0x00?GL_FALSE:GL_TRUE,
-                    mask_alpha==0x00?GL_FALSE:GL_TRUE);
-        pg->color_mask_dirty = false;
-    }
-}
-
-static inline void update_gl_stencil_mask(PGRAPHState* pg) {
-    if (pg->stencil_mask_dirty) {
-        GLuint gl_mask = GET_PG_REG(pg, CONTROL_1, STENCIL_MASK_WRITE);
-        glStencilMask(gl_mask);
-        pg->stencil_mask_dirty = false;
-    }
-}
-
-static inline void update_gl_depth_mask(PGRAPHState* pg) {
-    if (pg->depth_mask_dirty) {
-        glDepthMask(pg->depth_mask?GL_TRUE:GL_FALSE);
-        pg->depth_mask_dirty = false;
-    }
-}
-
 // Updates a dirty state and its dirty bit, returns the new state
 static inline bool update_gl_state(GLenum cap, bool state, bool* dirty)
 {
@@ -910,10 +886,159 @@ static inline bool update_gl_state(GLenum cap, bool state, bool* dirty)
     return state;
 }
 
-static inline void update_gl_stencil_test(PGRAPHState* pg) {
+static inline void update_gl_stencil_test_op(PGRAPHState* pg)
+{
+    if (pg->dirty.stencil_test_op) {
+        glStencilOp(map_register_to_gl_stencil_op(
+                        GET_PG_REG(pg, CONTROL_2, STENCIL_OP_FAIL)),
+                    map_register_to_gl_stencil_op(
+                        GET_PG_REG(pg, CONTROL_2, STENCIL_OP_ZFAIL)),
+                    map_register_to_gl_stencil_op(
+                        GET_PG_REG(pg, CONTROL_2, STENCIL_OP_ZPASS)));
+        pg->dirty.stencil_test_op = false;
+    }
+}
+
+static inline void update_gl_stencil_test_func(PGRAPHState* pg)
+{
+    if (pg->dirty.stencil_test_func) {
+        glStencilFunc(map_register_to_gl_func(
+                          GET_PG_REG(pg, CONTROL_1, STENCIL_FUNC)),
+                      GET_PG_REG(pg, CONTROL_1, STENCIL_REF),
+                      GET_PG_REG(pg, CONTROL_1, STENCIL_MASK_READ));
+        pg->dirty.stencil_test_func = false;
+    }
+}
+
+static inline void update_gl_alpha_test_func(PGRAPHState* pg)
+{
+    if (pg->dirty.alpha_test_func) {
+        glAlphaFunc(map_register_to_gl_func(
+                        GET_PG_REG(pg, CONTROL_0, ALPHAFUNC)),
+                    GET_PG_REG(pg, CONTROL_0, ALPHAREF) / 255.0f);
+        pg->dirty.alpha_test_func = false;
+    }
+}
+
+static inline void update_gl_alpha_test(PGRAPHState* pg)
+{
+    if (update_gl_state(GL_ALPHA_TEST,
+                        GET_PG_REG(pg, CONTROL_0, ALPHATESTENABLE),
+                        &pg->dirty.alpha_test)) {
+        update_gl_alpha_test_func(pg);
+    }
+}
+
+static inline void update_gl_depth_test_func(PGRAPHState* pg)
+{
+    if (pg->dirty.depth_test_func) {
+        glDepthFunc(map_register_to_gl_func(
+                        GET_PG_REG(pg, CONTROL_0, ZFUNC)));
+        pg->dirty.depth_test_func = false;
+    }
+}
+
+static inline void update_gl_depth_test(PGRAPHState* pg)
+{
+    if (update_gl_state(GL_DEPTH_TEST,
+                        GET_PG_REG(pg, CONTROL_0, ZENABLE),
+                        &pg->dirty.depth_test)) {
+        update_gl_depth_test_func(pg);
+    }
+}
+
+static inline void update_gl_fog_color(PGRAPHState* pg)
+{
+    if (pg->dirty.fog_color) {
+        GLfloat gl_color[] = {
+            GET_PG_REG(pg, FOGCOLOR, RED) / 255.0f,
+            GET_PG_REG(pg, FOGCOLOR, GREEN) / 255.0f,
+            GET_PG_REG(pg, FOGCOLOR, BLUE) / 255.0f,
+            GET_PG_REG(pg, FOGCOLOR, ALPHA) / 255.0f
+        };
+        glFogfv(GL_FOG_COLOR, gl_color);
+        pg->dirty.fog_color = false;
+    }
+}
+
+static inline void update_gl_fog_mode(PGRAPHState* pg)
+{
+    if (pg->dirty.fog_mode) {
+        GLint gl_mode;
+        switch(GET_PG_REG(pg, CONTROL_3, FOG_MODE)) {
+        case NV_PGRAPH_CONTROL_3_FOG_MODE_LINEAR:
+            gl_mode = GL_LINEAR;
+            break;
+        case NV_PGRAPH_CONTROL_3_FOG_MODE_EXP:
+            gl_mode = GL_EXP;
+            break;
+        case NV_PGRAPH_CONTROL_3_FOG_MODE_EXP2:
+            gl_mode = GL_EXP2;
+            break;
+        case NV_PGRAPH_CONTROL_3_FOG_MODE_LINEAR_ABS:
+        case NV_PGRAPH_CONTROL_3_FOG_MODE_EXP_ABS:
+        case NV_PGRAPH_CONTROL_3_FOG_MODE_EXP2_ABS:
+            // EYE_PLANE_ABSOLUTE ? probaly should be done in the vertex-shader
+            // https://www.opengl.org/registry/specs/NV/fog_distance.txt
+            assert(0);
+            break;
+        default:
+            assert(0);
+        }
+        glFogi(GL_FOG_MODE, gl_mode);
+        pg->dirty.fog_mode = false;
+    }
+}
+
+static inline void update_gl_fog(PGRAPHState* pg)
+{
+    if (update_gl_state(GL_FOG,
+                        GET_PG_REG(pg, CONTROL_3, FOGENABLE),
+                        &pg->dirty.fog)) {
+        update_gl_fog_mode(pg);
+        update_gl_fog_color(pg);
+        glHint(GL_FOG_HINT, GL_NICEST); // Not sure if necessary, but we should attempt to get the best fog possible
+    }
+}
+
+static inline void update_gl_color_mask(PGRAPHState* pg)
+{
+    if (pg->dirty.color_mask) {
+        bool mask_alpha = GET_PG_REG(pg, CONTROL_0, ALPHA_WRITE_ENABLE);
+        bool mask_red = GET_PG_REG(pg, CONTROL_0, RED_WRITE_ENABLE);
+        bool mask_green = GET_PG_REG(pg, CONTROL_0, GREEN_WRITE_ENABLE);
+        bool mask_blue = GET_PG_REG(pg, CONTROL_0, BLUE_WRITE_ENABLE);
+        glColorMask(mask_red?GL_TRUE:GL_FALSE,
+                    mask_green?GL_TRUE:GL_FALSE,
+                    mask_blue?GL_TRUE:GL_FALSE,
+                    mask_alpha?GL_TRUE:GL_FALSE);
+        pg->dirty.color_mask = false;
+    }
+}
+
+static inline void update_gl_stencil_mask(PGRAPHState* pg)
+{
+    if (pg->dirty.stencil_mask) {
+        GLuint gl_mask = GET_PG_REG(pg, CONTROL_1, STENCIL_MASK_WRITE);
+        glStencilMask(GET_PG_REG(pg, CONTROL_0, STENCIL_WRITE_ENABLE)?
+                      gl_mask:0x00);
+        pg->dirty.stencil_mask = false;
+    }
+}
+
+static inline void update_gl_depth_mask(PGRAPHState* pg)
+{
+    if (pg->dirty.depth_mask) {
+        glDepthMask(GET_PG_REG(pg, CONTROL_0, ZWRITEENABLE)?GL_TRUE:GL_FALSE);
+        pg->dirty.depth_mask = false;
+    }
+}
+
+static inline void update_gl_stencil_test(PGRAPHState* pg)
+{
     if (update_gl_state(GL_STENCIL_TEST,
                         GET_PG_REG(pg, CONTROL_1, STENCIL_TEST_ENABLE),
-                        &pg->stencil_test_enabled_dirty)) {
+                        &pg->dirty.stencil_test)) {
         update_gl_stencil_test_func(pg);
         update_gl_stencil_test_op(pg);
     }
@@ -1209,18 +1334,11 @@ static void load_graphics_object(NV2A_GPUState *d, hwaddr instance_address,
     obj->graphics_class = switch1 & NV_PGRAPH_CTX_SWITCH1_GRCLASS;
 
     /* init graphics object */
-    KelvinState *kelvin;
     switch (obj->graphics_class) {
     case NV_KELVIN_PRIMITIVE:
-        kelvin = &obj->data.kelvin;
-
-        /* generate vertex program */
-        VertexShader *shader = &kelvin->vertexshader;
-        glGenProgramsARB(1, &shader->gl_program);
-        assert(glGetError() == GL_NO_ERROR);
 
         /* temp hack? */
-        kelvin->vertex_attributes[NV2A_GPU_VERTEX_ATTR_DIFFUSE].inline_value = 0xFFFFFFF;
+        d->pgraph.vertex_attributes[NV2A_GPU_VERTEX_ATTR_DIFFUSE].inline_value = 0xFFFFFFF;
 
         break;
     default:
@@ -1240,27 +1358,45 @@ static GraphicsObject* lookup_graphics_object(PGRAPHState *s,
     return NULL;
 }
 
+static void get_surface_dimensions(PGRAPHState* pg, unsigned int* draw_width, unsigned int* draw_height) {
+    unsigned int w = pg->clip_width;
+    unsigned int h = pg->clip_height;
+    switch (pg->surface_anti_aliasing) {
+    case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_1:
+        break;
+    case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_CORNER_2:
+        w *= 2;
+        break;
+    case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_SQUARE_OFFSET_4:
+        w *= 2;
+        h *= 2;
+        break;
+    default:
+        assert(0);
+    }
+    if (draw_width) { *draw_width = w; }
+    if (draw_height) { *draw_height = h; }
+}
 
-static void kelvin_bind_converted_vertex_attributes(NV2A_GPUState *d,
-                                                    KelvinState *kelvin,
-                                                    bool inline_data,
+static void pgraph_bind_converted_vertex_attributes(NV2A_GPUState *d,
+                                                    bool inline_array,
                                                     unsigned int num_elements)
 {
     int i, j;
     for (i=0; i<NV2A_GPU_VERTEXSHADER_ATTRIBUTES; i++) {
-        VertexAttribute *attribute = &kelvin->vertex_attributes[i];
+        VertexAttribute *attribute = &d->pgraph.vertex_attributes[i];
         if (attribute->count && attribute->needs_conversion) {
 
             uint8_t *data;
-            if (inline_data) {
-                data = (uint8_t*)kelvin->inline_array
+            if (inline_array) {
+                data = (uint8_t*)d->pgraph.inline_array
                         + attribute->inline_array_offset;
             } else {
                 hwaddr dma_len;
                 if (attribute->dma_select) {
-                    data = nv_dma_load_and_map(d, kelvin->dma_vertex_b, &dma_len);
+                    data = nv_dma_load_and_map(d, d->pgraph.dma_vertex_b, &dma_len);
                 } else {
-                    data = nv_dma_load_and_map(d, kelvin->dma_vertex_a, &dma_len);
+                    data = nv_dma_load_and_map(d, d->pgraph.dma_vertex_a, &dma_len);
                 }
 
                 assert(attribute->offset < dma_len);
@@ -1277,7 +1413,7 @@ static void kelvin_bind_converted_vertex_attributes(NV2A_GPUState *d,
             }
 
             for (j=attribute->converted_elements; j<num_elements; j++) {
-                uint8_t *in = data + j * attribute->stride;
+                uint8_t *in = data + j * attribute->stride; //FIXME: This wouldn't work for inline_arrays!
                 uint8_t *out = attribute->converted_buffer + j * stride;
 
                 switch (attribute->format) {
@@ -1303,12 +1439,20 @@ static void kelvin_bind_converted_vertex_attributes(NV2A_GPUState *d,
     }
 }
 
-static unsigned int kelvin_bind_inline_array(KelvinState *kelvin)
+static unsigned int pgraph_bind_inline_array(NV2A_GPUState *d)
 {
     int i;
     unsigned int offset = 0;
     for (i=0; i<NV2A_GPU_VERTEXSHADER_ATTRIBUTES; i++) {
-        VertexAttribute *attribute = &kelvin->vertex_attributes[i];
+        VertexAttribute *attribute = &d->pgraph.vertex_attributes[i];
+        if (attribute->count) {
+            offset += attribute->size * attribute->count;
+        }
+    }
+    unsigned int stride = offset;
+    offset = 0;
+    for (i=0; i<NV2A_GPU_VERTEXSHADER_ATTRIBUTES; i++) {
+        VertexAttribute *attribute = &d->pgraph.vertex_attributes[i];
         if (attribute->count) {
 
             glEnableVertexAttribArray(i);
@@ -1317,11 +1461,11 @@ static unsigned int kelvin_bind_inline_array(KelvinState *kelvin)
 
             if (!attribute->needs_conversion) {
                 glVertexAttribPointer(i,
-                    attribute->count,
+                    attribute->gl_size,
                     attribute->gl_type,
                     attribute->gl_normalize,
-                    attribute->stride,
-                    (uint8_t*)kelvin->inline_array + offset);
+                    stride,
+                    (uint8_t*)d->pgraph.inline_array + offset);
             }
 
             offset += attribute->size * attribute->count;
@@ -1330,15 +1474,15 @@ static unsigned int kelvin_bind_inline_array(KelvinState *kelvin)
     return offset;
 }
 
-static void kelvin_bind_vertex_attributes(NV2A_GPUState *d,
-                                                 KelvinState *kelvin)
+static void pgraph_bind_vertex_attributes(NV2A_GPUState *d)
 {
     int i;
 
-    debugger_push_group("NV2A: kelvin_bind_vertex_attributes");
+    debugger_push_group("NV2A: pgraph_bind_vertex_attributes");
 
     for (i=0; i<NV2A_GPU_VERTEXSHADER_ATTRIBUTES; i++) {
-        VertexAttribute *attribute = &kelvin->vertex_attributes[i];
+        VertexAttribute *attribute = &d->pgraph.vertex_attributes[i];
+        debugger_push_group("VA %i: count=%d, stride=%i, kelvin_format=0x%x, needs_conversion=%d",i,attribute->count,attribute->stride,attribute->format,attribute->needs_conversion);
         if (attribute->count) {
             glEnableVertexAttribArray(i);
 
@@ -1349,28 +1493,41 @@ static void kelvin_bind_vertex_attributes(NV2A_GPUState *d,
                 //TODO: Load (and even map..) DMA Object once and re-use later, however, we don't know if the object is valid so we must delay the load until we want to use it
                 /* TODO: cache coherence */
                 if (attribute->dma_select) {
-                    vertex_data = nv_dma_load_and_map(d, kelvin->dma_vertex_b, &dma_len);
+                    vertex_data = nv_dma_load_and_map(d, d->pgraph.dma_vertex_b, &dma_len);
                 } else {
-                    vertex_data = nv_dma_load_and_map(d, kelvin->dma_vertex_a, &dma_len);
+                    vertex_data = nv_dma_load_and_map(d, d->pgraph.dma_vertex_a, &dma_len);
                 }
                 assert(attribute->offset < dma_len);
                 vertex_data += attribute->offset;
                 glVertexAttribPointer(i,
-                    attribute->count,
+                    attribute->gl_size,
                     attribute->gl_type,
                     attribute->gl_normalize,
                     attribute->stride,
                     vertex_data);
+                debugger_message("apitrace bug?"); /* glVertexAttribPointer not shown! */
             }
         } else {
             glDisableVertexAttribArray(i);
 
             glVertexAttrib4ubv(i, (GLubyte *)&attribute->inline_value);
         }
+        debugger_pop_group();
     }
 
     debugger_pop_group();
 
+}
+
+static void pgraph_update_state(PGRAPHState* pg) {
+    update_gl_depth_mask(pg);
+    update_gl_stencil_mask(pg);
+    update_gl_color_mask(pg);
+
+    update_gl_alpha_test(pg);
+    update_gl_depth_test(pg);
+    update_gl_stencil_test(pg);
+    update_gl_fog(pg);
 }
 
 static void pgraph_bind_textures(NV2A_GPUState *d)
@@ -1394,7 +1551,9 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
             ColorFormatInfo f = kelvin_color_format_map[texture->color_format];
             if (f.bytes_per_pixel == 0) {
 
-                debugger_message("NV2A: unhandled texture->color_format 0x%0x",
+                printf("NV2A: unhandled texture->color_format 0x%x\n",
+                                 texture->color_format);
+                debugger_message("NV2A: unhandled texture->color_format 0x%x",
                                  texture->color_format);
 
 #if 1
@@ -1426,49 +1585,49 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
                 height = 1 << texture->log_height;
             }
 
-            /* Label the object so we can find it later in the debugger */
-            if (1) {
-                static bool initialized = false;
-                static void(*imported_glObjectLabelKHR)(GLenum identifier, GLuint name, GLsizei length, const char *label) = NULL;
-                if (!initialized) {
-                    const GLubyte *extensions = glGetString(GL_EXTENSIONS);
-                    if (glo_check_extension((const GLubyte *)"GL_KHR_debug",extensions)) {
-                        imported_glObjectLabelKHR = glo_get_extension_proc((const GLubyte *)"glObjectLabel");
-                    }
-                    initialized = true;
-                }
-                if (imported_glObjectLabelKHR) {
-                    char buffer[256];
-                    sprintf(buffer,"NV2A: %s.0x%X+0x%X: { dirty: %i; "
-                                   "color_format: 0x%X; "
-                                   "pitch: %i }",
-                                   texture->dma_select?"B":"A",
-                                   texture->dma_select?d->pgraph.dma_b:
-                                                       d->pgraph.dma_a,
-                                   texture->offset, texture->dirty,
-                                   texture->color_format,
-                                   texture->pitch);
-                    assert(glGetError()==GL_NO_ERROR);
-                    imported_glObjectLabelKHR(GL_TEXTURE,gl_texture,-1,buffer);
-                    while(glGetError()!=GL_NO_ERROR); //FIXME: This is necessary because GLX does always return a proc currently..
-                }
-            }
+//FIXME: 3D textures plox!
 
             glBindTexture(gl_target, gl_texture);
 
-            if (!texture->dirty) continue;
 
-            /* load texture data*/
-
+            /* Load texture DMA object */
             hwaddr dma_len;
             uint8_t *texture_data;
-            if (texture->dma_select) {
-                texture_data = nv_dma_load_and_map(d, d->pgraph.dma_b, &dma_len);
-            } else {
-                texture_data = nv_dma_load_and_map(d, d->pgraph.dma_a, &dma_len);
+            DMAObject dma = nv_dma_load(d, texture->dma_select?d->pgraph.dma_b:
+                                                               d->pgraph.dma_a);
+
+            /* Label the texture so we can find it in the debugger */
+            debugger_label(GL_TEXTURE, gl_texture,
+                           "NV2A: 0x%X: { "
+                           "color_format: 0x%X; "
+                           "pitch: %i }",
+                           dma.address + texture->offset,
+                           texture->color_format,
+                           texture->pitch);
+
+            memory_region_sync_dirty_bitmap(d->vram);
+            bool resource_dirty = memory_region_get_dirty(d->vram,
+                                      dma.address + texture->offset,
+                                      texture->pitch * height,
+                                      DIRTY_MEMORY_NV2A_GPU_RESOURCE);
+
+            /* Texture state and the texture content didn't change? Abort! */
+            if (!texture->dirty && !resource_dirty) {
+                continue;
             }
+
+            // FIXME: Really have to handle overlapping resources before claiming this is clean, check my wiki
+            memory_region_reset_dirty(d->vram,
+                                      dma.address + texture->offset,
+                                      texture->pitch * height,
+                                      DIRTY_MEMORY_NV2A_GPU_RESOURCE);
+
+
+            /* Locate texture data */
+            texture_data = nv_dma_map(d, &dma, &dma_len);
             assert(texture->offset < dma_len);
             texture_data += texture->offset;
+
 
             /* convert texture formats the host can't handle natively */
             uint8_t* converted_texture_data = NULL;
@@ -1504,22 +1663,33 @@ static void pgraph_bind_textures(NV2A_GPUState *d)
 
                 glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
             } else {
-#ifdef DEBUG_NV2A_GPU_DISABLE_MIPMAP
-                unsigned int levels = 1;
-#else
                 unsigned int levels = texture->levels;
                 if (texture->max_mipmap_level < levels) {
                     levels = texture->max_mipmap_level;
                 }
 
+#ifdef DEBUG_NV2A_GPU_DISABLE_MIPMAP
+                int level;
+#if 0
+//FIXME: This hack causes problems with compressed textures
+         They might be broken with normal mipmapping too
+                printf("MIPMAP Hack: %dx%d requested %d level(s)\n", width, height, levels);
+                for (level = 0; (level < (levels-1)) && (level < 3); level++) {
+                    texture_data += width * height * f.bytes_per_pixel;
+                    width /= 2;
+                    height /= 2;
+                }              
+                printf("MIPMAP Hack: %dx%d returned\n", width, height);
+#endif
+                levels = 1;
+#else
                 glTexParameteri(gl_target, GL_TEXTURE_BASE_LEVEL,
                     texture->min_mipmap_level);
                 glTexParameteri(gl_target, GL_TEXTURE_MAX_LEVEL,
                     levels-1);
-#endif
-
 
                 int level;
+#endif
                 for (level = 0; level < levels; level++) {
                     if (f.gl_format == 0) { /* retarded way of indicating compressed */
                         unsigned int block_size;
@@ -1614,7 +1784,7 @@ static gboolean shader_equal(gconstpointer a, gconstpointer b)
 }
 
 //FIXME: Split this into vertex, fragment and program functions and make sure to only use information which also influences the hash!
-static GLuint generate_shaders(PGRAPHState* pg, KelvinState* kelvin, ShaderState state)
+static GLuint generate_shaders(PGRAPHState* pg, ShaderState state)
 {
     int i;
 
@@ -1633,6 +1803,8 @@ static GLuint generate_shaders(PGRAPHState* pg, KelvinState* kelvin, ShaderState
         /* generate vertex shader mimicking fixed function */
 
         vertex_shader_code =
+          "#version 110\n"
+          "\n"
           "attribute vec4 position;\n"
           "attribute vec3 normal;\n"
           "attribute vec4 diffuse;\n"
@@ -1655,6 +1827,7 @@ static GLuint generate_shaders(PGRAPHState* pg, KelvinState* kelvin, ShaderState
           //"   gl_Position = position * composite;\n"
           //"   gl_Position.x = (gl_Position.x - 320.0) / 320.0;\n"
           //"   gl_Position.y = -(gl_Position.y - 240.0) / 240.0;\n"
+          "   gl_FogFragCoord = 0.5;\n" //FIXME!!! Probably generated from the vertex attrib?
           "   gl_Position.z = gl_Position.z * 2.0 - gl_Position.w;\n"
           "   gl_FrontColor = diffuse;\n"
           "   gl_TexCoord[0] = textureMatrix0 * multiTexCoord0;\n"
@@ -1663,14 +1836,14 @@ static GLuint generate_shaders(PGRAPHState* pg, KelvinState* kelvin, ShaderState
           "   gl_TexCoord[3] = textureMatrix3 * multiTexCoord3;\n"
           "}\n";
     } else {
-        VertexShader *shader = &kelvin->vertexshader;
+        VertexShader *shader = &pg->vertexshader;
         transform_program_code = vsh_translate(VSH_VERSION_XVS,
-                                                        &shader->program_data[kelvin->vertexshader_start_slot*4],
-                                                        (NV2A_GPU_MAX_VERTEXSHADER_LENGTH-kelvin->vertexshader_start_slot)*4);
+                                                        &shader->program_data[pg->vertexshader_start_slot*4],
+                                                        (NV2A_GPU_MAX_VERTEXSHADER_LENGTH-pg->vertexshader_start_slot)*4);
         vertex_shader_code = qstring_get_str(transform_program_code);
     }
 
-    glShaderSource(vertex_shader, 1, &vertex_shader_code, 0);
+    glShaderSource(vertex_shader, 1, &vertex_shader_code, NULL);
     glCompileShader(vertex_shader);
 
     NV2A_GPU_DPRINTF("bind new vertex shader, code:\n%s\n", vertex_shader_code);
@@ -1678,8 +1851,9 @@ static GLuint generate_shaders(PGRAPHState* pg, KelvinState* kelvin, ShaderState
     /* Check it compiled */
     glGetShaderiv(vertex_shader, GL_COMPILE_STATUS, &compiled);
     if (!compiled) {
-        GLchar log[1024];
-        glGetShaderInfoLog(vertex_shader, 1024, NULL, log);
+        GLchar log[GLSL_LOG_LENGTH];
+        glGetShaderInfoLog(vertex_shader, GLSL_LOG_LENGTH, NULL, log);
+        log[GLSL_LOG_LENGTH - 1] = '\0';
         fprintf(stderr, "\n\n%s\n", vertex_shader_code);
         fprintf(stderr, "nv2a: vertex shader compilation failed: %s\n", log);
         abort();
@@ -1790,7 +1964,7 @@ static GLuint generate_shaders(PGRAPHState* pg, KelvinState* kelvin, ShaderState
     return program;
 }
 
-static void pgraph_bind_shaders(PGRAPHState *pg, KelvinState* kelvin)
+static void pgraph_bind_shaders(PGRAPHState *pg)
 {
     debugger_push_group("NV2A: pgraph_bind_shaders");
     int i;
@@ -1798,7 +1972,7 @@ static void pgraph_bind_shaders(PGRAPHState *pg, KelvinState* kelvin)
     bool fixed_function = GET_MASK(pg->regs[NV_PGRAPH_CSV0_D],
                                    NV_PGRAPH_CSV0_D_MODE) == 0;
 
-    if (pg->shaders_dirty) {
+    if (pg->dirty.shaders) {
 
         /* Hash the vertex shader if it exists */
         guint vertex_shader_hash;
@@ -1806,13 +1980,13 @@ static void pgraph_bind_shaders(PGRAPHState *pg, KelvinState* kelvin)
             vertex_shader_hash = 0;
         } else {
             //FIXME: This will currently ignore the dirty bit..
-            uint32_t* transform_program = kelvin->vertexshader.program_data;
-            unsigned int start = kelvin->vertexshader_start_slot; //FIXME: Make sure this is a slot number, not a byte or dword offset
+            unsigned int start = pg->vertexshader_start_slot;
+            uint32_t* transform_program = &pg->vertexshader.program_data[start * 4];
             /* Search for the final instruction */
-            for(i = 0; i < NV2A_GPU_MAX_VERTEXSHADER_LENGTH; i++) {
-                if (transform_program[i * 4 + 3] & 1) { break; }
+            for(i = 0; i < (NV2A_GPU_MAX_VERTEXSHADER_LENGTH - start); i++) {
+                if (transform_program[i * 4 + 3] & 1) { i++; break; }
             }
-            vertex_shader_hash = hash(&transform_program[start * 4], (NV2A_GPU_MAX_VERTEXSHADER_LENGTH - i) * 4);
+            vertex_shader_hash = hash(transform_program, i * 4);
         }
 
         ShaderState state = {
@@ -1822,7 +1996,6 @@ static void pgraph_bind_shaders(PGRAPHState *pg, KelvinState* kelvin)
             .other_stage_input = pg->regs[NV_PGRAPH_SHADERCTL],
             .final_inputs_0 = pg->regs[NV_PGRAPH_COMBINESPECFOG0],
             .final_inputs_1 = pg->regs[NV_PGRAPH_COMBINESPECFOG1],
-
             /* vertex shader stuff */
             .vertex_shader_hash = vertex_shader_hash
         };
@@ -1844,31 +2017,39 @@ static void pgraph_bind_shaders(PGRAPHState *pg, KelvinState* kelvin)
                         pg->textures[i].color_format].linear) {
                 state.rect_tex[i] = true;
             }
+            int j;
+            for(j = 0; j < 4; j++) {
+                /* compare_mode[i][j] = stage i, component j { s,t,r,q } */
+                state.compare_mode[i][j] = 
+                    (pg->regs[NV_PGRAPH_SHADERCLIPMODE] >> (4 * i + j)) & 1;
+            }
+            state.alphakill[i] = pg->textures[i].alphakill;
         }
 
         /* if the shader changed / is dirty, dirty all the constants so they will be uploaded again */
         for (i=0; i<NV2A_GPU_VERTEXSHADER_CONSTANTS; i++) {
-            kelvin->constants[i].dirty = true;
+            pg->constants[i].dirty = true;
         }
 
 #if 1
         //FIXME: Add vertex shader to cache! - we should probably cache the 3 of them individually (vertex, fragment, program)
-        gpointer cached_shader = g_hash_table_lookup(pg->shader_cache, &state);
+        gpointer cached_shader = g_hash_table_lookup(pg->cache.shader, &state);
         if (cached_shader) {
             pg->gl_program = (GLuint)cached_shader;
         } else {
-            pg->gl_program = generate_shaders(pg, kelvin, state);
+            pg->gl_program = generate_shaders(pg, state);
 
             /* cache it */
             
             ShaderState *cache_state = g_malloc(sizeof(*cache_state));
             memcpy(cache_state, &state, sizeof(*cache_state));
-            g_hash_table_insert(pg->shader_cache, cache_state,
+            g_hash_table_insert(pg->cache.shader, cache_state,
                                 (gpointer)pg->gl_program);
         }
 #else
-        pg->gl_program = generate_shaders(pg, kelvin, state);
+        pg->gl_program = generate_shaders(pg, state);
 #endif
+        pg->dirty.shaders = false;
     }
 
     glUseProgram(pg->gl_program);
@@ -1879,6 +2060,7 @@ static void pgraph_bind_shaders(PGRAPHState *pg, KelvinState* kelvin)
 
     /* update combiner constants */
     for (i = 0; i<= 8; i++) {
+
         uint32_t constant[2];
         if (i == 8) {
             /* final combiner */
@@ -1904,12 +2086,38 @@ static void pgraph_bind_shaders(PGRAPHState *pg, KelvinState* kelvin)
                 glUniform4fv(loc, 1, value);
             }
         }
+
+        /* Set eye vector for combiner */
+        if (pg->dirty.eye_vector) {
+            GLint loc = glGetUniformLocation(pg->gl_program, "eye_vector");
+            if (loc != -1) {
+                glUniform3fv(loc, 1, pg->eye_vector);
+            }
+            pg->dirty.eye_vector = false;
+        }
+
     }
 
     debugger_pop_group();
 
+    float zclip_max = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMAX];
+    float zclip_min = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMIN];
+
     /* update fixed function uniforms */
     if (fixed_function) {
+
+
+        /* FIXME FIXME FIXME
+
+
+          - c[58] and c[59] used for viewport
+          - c[0,1,2,3] used for composite matrix
+
+
+        */
+
+        assert(pg->FIXME_REMOVEME_comp_src == 2);
+
         GLint comMatLoc = glGetUniformLocation(pg->gl_program, "composite");
         glUniformMatrix4fv(comMatLoc, 1, GL_FALSE, pg->composite_matrix);
 
@@ -1930,13 +2138,10 @@ static void pgraph_bind_shaders(PGRAPHState *pg, KelvinState* kelvin)
         GLint texMat3Loc = glGetUniformLocation(pg->gl_program, "textureMatrix3");
         glUniformMatrix4fv(texMat3Loc, 1, GL_FALSE, pg->texture_matrix_enable[3]?pg->texture_matrix3:identity_matrix);
 
-        float zclip_max = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMAX];
-        float zclip_min = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMIN];
-
         /* estimate the viewport by assuming it matches the clip region ... */
 #if 0
-        float m11 = *(float*)&kelvin->constants[59].data[0];
-        float m22 = *(float*)&kelvin->constants[59].data[1];
+        float m11 = *(float*)&pg->constants[59].data[0];
+        float m22 = *(float*)&pg->constants[59].data[1];
 
         float invViewport[16] = {
             2.0/w, 0.0,   0.0,        0.0,
@@ -1946,8 +2151,25 @@ static void pgraph_bind_shaders(PGRAPHState *pg, KelvinState* kelvin)
         };
 
 #else
-        float m11 = 0.5 * pg->clip_width;
-        float m22 = -0.5 * pg->clip_height;
+
+
+
+float w = *(float*)&pg->constants[59].data[0];
+w = pg->clip_width;
+float h = *(float*)&pg->constants[59].data[1];
+h = pg->clip_height;
+
+/*
+        unsigned int w;
+        unsigned int h;
+        get_surface_dimensions(pg, &w, &h);
+*/
+//FIXME: Probably do this elsewhere..?
+
+
+
+        float m11 = 0.5 * w;
+        float m22 = -0.5 * h;
         float m33 = zclip_max - zclip_min;
         //float m41 = m11;
         //float m42 = -m22;
@@ -1974,7 +2196,7 @@ static void pgraph_bind_shaders(PGRAPHState *pg, KelvinState* kelvin)
 
         /* load constants */
         for (i=0; i<NV2A_GPU_VERTEXSHADER_CONSTANTS; i++) {
-            VertexShaderConstant *constant = &kelvin->constants[i];
+            VertexShaderConstant *constant = &pg->constants[i];
             //if (!constant->dirty) continue;
 
             char tmp[7];
@@ -1986,15 +2208,11 @@ static void pgraph_bind_shaders(PGRAPHState *pg, KelvinState* kelvin)
             }
         }
 
-        float zclip_max = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMAX];
-        float zclip_min = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMIN];
         GLint loc = glGetUniformLocation(pg->gl_program, "cliprange");
         glUniform2f(loc, zclip_min, zclip_max);
 //        glDepthRangef();
 
     }
-
-    pg->shaders_dirty = false;
 
     debugger_pop_group();
 }
@@ -2017,21 +2235,22 @@ printf("0x%x+0x%x\n",dma->address,s->offset);
 
 }
 
-//FIXME: All of those don't respect an offset
+//FIXME: All of those don't respect a clip offset
+//FIXME: Making these regions later shouldn't have a bad effect (except for more useless updates) - but it does crash
 static void mark_cpu_surface_dirty(NV2A_GPUState *d, Surface* s, DMAObject* dma) {
     memory_region_set_dirty(d->vram, dma->address + s->offset,
-                                     s->pitch * d->pgraph.clip_height);
+                                     s->pitch * d->pgraph.clip_height); //FIXME: AA
 }
 
 static void mark_cpu_surface_clean(NV2A_GPUState *d, Surface* s, DMAObject* dma, unsigned client) {
     memory_region_reset_dirty(d->vram, dma->address + s->offset,
-                                       s->pitch * d->pgraph.clip_height,
+                                       s->pitch * d->pgraph.clip_height, //FIXME: AA
                                        client);
 }
 
 static bool is_cpu_surface_dirty(NV2A_GPUState *d, Surface* s, DMAObject* dma, unsigned client) {
     return memory_region_get_dirty(d->vram, dma->address + s->offset,
-                                            s->pitch * d->pgraph.clip_height,
+                                            s->pitch * d->pgraph.clip_height, //FIXME: AA
                                             client);
 }
 
@@ -2040,25 +2259,19 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
     /* Make sure we are working with a clean context */
     assert(glGetError() == GL_NO_ERROR);
 
+#ifdef FORCE_NOXY
+    CHECKXY(&d->pgraph)
+#else
     /* TODO */
     assert(d->pgraph.clip_x == 0 && d->pgraph.clip_y == 0);
+#endif
 
     bool swizzle = (d->pgraph.surface_type == NV097_SET_SURFACE_FORMAT_TYPE_SWIZZLE);
 
     unsigned int w;
     unsigned int h;
-
-    if (swizzle) {
-      w = 1 << d->pgraph.surface_swizzle_width_shift; //FIXME: Can we just use the actual surface dimensions here?!
-      h = 1 << d->pgraph.surface_swizzle_height_shift;
-    } else {
-      w = d->pgraph.clip_width; 
-      h = d->pgraph.clip_height; 
-    }
-
+    get_surface_dimensions(&d->pgraph, &w, &h);
     assert(w <= (s->pitch/bytes_per_pixel));
-    assert(d->pgraph.clip_width <= w);
-    assert(d->pgraph.clip_height <= h);
 
     void* gpu_buffer = data + s->offset;
     void* tmp_buffer;
@@ -2088,7 +2301,8 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
         // If the surface is swizzled we have to unswizzle the CPU data before uploading them
         if (swizzle) {
             unswizzle_rect(gpu_buffer,
-                           w,h,
+                           1 << d->pgraph.surface_swizzle_width_shift,
+                           1 << d->pgraph.surface_swizzle_height_shift,
                            tmp_buffer,
                            s->pitch,
                            bytes_per_pixel);
@@ -2112,8 +2326,8 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
 
         glWindowPos2i(0, d->pgraph.clip_height);
         glPixelZoom(1, -1);
-        glDrawPixels(d->pgraph.clip_width,
-                     d->pgraph.clip_height,
+        glDrawPixels(w,
+                     h,
                      gl_format, gl_type,
                      swizzle ? tmp_buffer : gpu_buffer);
 
@@ -2140,7 +2354,8 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
         /* When reading we have to swizzle the data for the CPU */
         if (swizzle) {
             swizzle_rect(tmp_buffer,
-                         w,h,
+                         1 << d->pgraph.surface_swizzle_width_shift,
+                         1 << d->pgraph.surface_swizzle_height_shift,
                          gpu_buffer,
                          s->pitch,
                          bytes_per_pixel);
@@ -2158,7 +2373,7 @@ static void perform_surface_update(NV2A_GPUState *d, Surface* s, DMAObject* dma,
         upload?"upload (CPU->GPU)":"download (GPU->CPU)",
         dma->address, dma->address + dma->limit,
         dma->address + s->offset,
-        dma->address + s->pitch * d->pgraph.clip_height,
+        dma->address + s->offset + s->pitch * d->pgraph.clip_height * 2,
         d->pgraph.clip_x, d->pgraph.clip_y,
         d->pgraph.clip_width, d->pgraph.clip_height,
         s->pitch,
@@ -2175,13 +2390,6 @@ static void pgraph_update_surface_zeta(NV2A_GPUState *d, bool upload)
     /* Early out if we have no surface */
     Surface* s = &d->pgraph.surface_zeta;
     if (s->format == 0) { return; }
-
-
-if (s->offset == 0) {
-    //FIXME: I'm not sure why.. but this does happen during init!
-    debugger_message("Would have error'd! This might be bad?!");
-    return;
-}
 
     /* Check dirty flags, load DMA object if necessary */
     if (upload) {
@@ -2207,6 +2415,7 @@ if (s->offset == 0) {
     }
 
     /* Construct the GL format */
+    //FIXME: Merge with surface framebuffer creation to one surface format table
     bool has_stencil;
     GLenum gl_format;
     GLenum gl_type;
@@ -2227,7 +2436,7 @@ if (s->offset == 0) {
     default:
         assert(false);
     }
-printf("s->format = 0x%x\n",s->format);
+
     /* Map surface into memory */
     hwaddr zeta_len;
     uint8_t *zeta_data = map_surface(d, s, &zeta_dma, &zeta_len);
@@ -2235,10 +2444,10 @@ printf("s->format = 0x%x\n",s->format);
     /* Allow zeta access, then perform the zeta upload or download */
     if (upload) {
         glDepthMask(GL_TRUE);
-        d->pgraph.depth_mask_dirty = true;
+        d->pgraph.dirty.depth_mask = true;
         if (has_stencil) {
             glStencilMask(0xFF);
-            d->pgraph.stencil_mask_dirty = true;
+            d->pgraph.dirty.stencil_mask = true;
         }
     }
     perform_surface_update(d, s, &zeta_dma, upload, zeta_data, gl_format, gl_type, bytes_per_pixel);
@@ -2247,11 +2456,13 @@ printf("s->format = 0x%x\n",s->format);
     if (!upload) {
         /* Surface downloaded. Handlers (VGA etc.) need to update */
         mark_cpu_surface_dirty(d, s, &zeta_dma);
+        assert(is_cpu_surface_dirty(d, s, &zeta_dma, DIRTY_MEMORY_NV2A_GPU_RESOURCE));
         /* We haven't drawn to this again yet, we just downloaded it*/
         s->draw_dirty = false;
     }
     /* Mark it as clean only for us, so changes dirty it again */
     mark_cpu_surface_clean(d, s, &zeta_dma, DIRTY_MEMORY_NV2A_GPU_ZETA);
+    assert(!is_cpu_surface_dirty(d, s, &zeta_dma, DIRTY_MEMORY_NV2A_GPU_ZETA));
 
 }
 
@@ -2289,6 +2500,7 @@ static void pgraph_update_surface_color(NV2A_GPUState *d, bool upload)
     }
 
     /* Construct the GL format */
+    //FIXME: Merge with surface framebuffer creation to one surface format table
     GLenum gl_format;
     GLenum gl_type;
     unsigned int bytes_per_pixel;
@@ -2315,7 +2527,7 @@ static void pgraph_update_surface_color(NV2A_GPUState *d, bool upload)
     /* Allow color access, then perform the color upload or download */
     if (upload) {
         glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
-        d->pgraph.color_mask_dirty = true;
+        d->pgraph.dirty.color_mask = true;
     }
     perform_surface_update(d, s, &color_dma, upload, color_data, gl_format, gl_type, bytes_per_pixel);
 
@@ -2323,37 +2535,169 @@ static void pgraph_update_surface_color(NV2A_GPUState *d, bool upload)
     if (!upload) {
         /* Surface downloaded. Handlers (VGA etc.) need to update */
         mark_cpu_surface_dirty(d, s, &color_dma);
+        assert(is_cpu_surface_dirty(d, s, &color_dma, DIRTY_MEMORY_NV2A_GPU_RESOURCE));
         /* We haven't drawn to this again yet, we just downloaded it*/
         s->draw_dirty = false;
     }
     /* Mark it as clean only for us, so changes dirty it again */
     mark_cpu_surface_clean(d, s, &color_dma, DIRTY_MEMORY_NV2A_GPU_COLOR);
+    assert(!is_cpu_surface_dirty(d, s, &color_dma, DIRTY_MEMORY_NV2A_GPU_COLOR));
+
+}
+
+
+static void bind_gl_framebuffer(PGRAPHState* pg) {
+
+    if (pg->dirty.framebuffer) {
+    
+        /* Get surface dimensions and make sure it can exist */
+        unsigned int w;
+        unsigned int h;
+        get_surface_dimensions(pg, &w, &h);
+        if ((w == 0) || (h == 0)) {
+            debugger_message("No surfaces bound: width or height 0!");
+            pg->dirty.framebuffer = false;
+            return;
+        }
+
+        /* Map zeta format */
+        //FIXME: Merge with stuff for surface reads to one surface format table
+        bool has_depth;
+        bool has_stencil;
+        GLenum zeta_format;
+        switch(pg->surface_zeta.format) {
+        case 0:
+            has_depth = false;
+            has_stencil = false;
+        case NV097_SET_SURFACE_FORMAT_ZETA_Z16:
+            has_depth = true;
+            has_stencil = false;
+            zeta_format = GL_DEPTH_COMPONENT16;
+            break;
+        case NV097_SET_SURFACE_FORMAT_ZETA_Z24S8:
+            has_depth = true;
+            has_stencil = true;
+            zeta_format = GL_DEPTH24_STENCIL8_EXT;
+            break;
+        default:
+            assert(0);
+        }
+
+        /* Map color format */
+        //FIXME: Merge with stuff for surface reads to one surface format table
+        bool has_color;
+        GLenum color_format;
+        switch(pg->surface_color.format) {
+        case 0:
+            has_color = false;
+        case NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5:
+            has_color = true;
+            color_format = GL_RGB565;
+            break;
+        case NV097_SET_SURFACE_FORMAT_COLOR_LE_X8R8G8B8_Z8R8G8B8:
+        case NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8:
+            has_color = true;
+            color_format = GL_RGBA8;
+            break;
+        default:
+            assert(0);
+        }
+
+        if (!has_depth && !has_stencil && !has_color) {
+            debugger_message("No surfaces bound: no zeta, no color!");
+            pg->dirty.framebuffer = false;
+            assert(0); //FIXME: Untested code path!
+            return;
+        }
+
+        debugger_push_group("bind_gl_framebuffer %dx%d (depth: %i, stencil: %i, color: %i)", w, h, has_depth, has_stencil, has_color);
+
+        /* Zeta renderbuffer */
+        Renderbuffer* zeta_renderbuffer;
+        if (has_depth || has_stencil) {
+            zeta_renderbuffer = bind_renderbuffer(pg, w, h, zeta_format);
+            debugger_label(GL_RENDERBUFFER, zeta_renderbuffer->renderbuffer, "FIXME: ZETA %i",
+    /*
+                           "NV2A: 0x%X: { "
+                           "format: 0x%X; "
+                           "swizzle: %i (%ix%i); "
+                           "pitch: %i; "
+                           "clip: %ix%i; "
+                           "AA: %i }",
+                           color_dma.address + s->offset,
+                           s->format,
+                           pg->surface_type == NV097_SET_SURFACE_FORMAT_TYPE_SWIZZLE,
+                           1 << d->pgraph.surface_swizzle_width_shift,
+                           1 << d->pgraph.surface_swizzle_height_shift,
+                           s->pitch,
+                           pg->clip_width, pg->clip_height,
+    */
+                           pg->surface_anti_aliasing);
+        }
+
+        /* Color renderbuffer */
+        Renderbuffer* color_renderbuffer;
+        if (has_color) {
+            color_renderbuffer = bind_renderbuffer(pg, w, h, color_format);
+            debugger_label(GL_RENDERBUFFER, color_renderbuffer->renderbuffer, "FIXME: COLOR");
+        }
+
+        /* Framebuffer */
+        Framebuffer* framebuffer = bind_framebuffer(pg,
+                                       has_depth?
+                                           zeta_renderbuffer->renderbuffer:
+                                           0,
+                                       has_stencil?
+                                           zeta_renderbuffer->renderbuffer:
+                                           0,
+                                       has_color?
+                                           color_renderbuffer->renderbuffer:
+                                           0);
+
+        debugger_pop_group();
+
+        /* Mark the surface as dirty so it will be reuploaded */
+        //FIXME FIXME FIXME FIXME FIXME!!!
+
+        pg->dirty.framebuffer = false;
+    }
+
 }
 
 static inline void pgraph_update_surfaces(NV2A_GPUState *d, bool upload, bool zeta, bool color)
 {
+
+// FIXME: This should probably be moved to the caller of this function or passed down the very bottom and returned as boolean..
     /* Early out if we have nothing to do */
     if (!zeta && !color) {
         return;
     }
+
+//FIXME: Logic to think about: when exactly do we have to switch? only on uploads?
+// Is it okay if we don't bind unless a write happens?
+// ...
+/* Switch to the current surface */
+if (upload) {
+    bind_gl_framebuffer(&d->pgraph);
+}
+
+
+    /* Assert to make sure we don't upload to the wrong surface */
+    assert(!(upload && d->pgraph.dirty.framebuffer));
 
     debugger_push_group("pgraph_update_surfaces(upload: %i, zeta: %i, color: %i)",upload,zeta,color);
 
     /* Sync dirty bits, then update surfaces [and sync dirty bits again(?)] */
     memory_region_sync_dirty_bitmap(d->vram);
     if (zeta) {
-      debugger_push_group("pgraph_update_surface_zeta");
       pgraph_update_surface_zeta(d, upload);
-      debugger_pop_group();
     }
     if (color) {
-      debugger_push_group("pgraph_update_surface_color");
       pgraph_update_surface_color(d, upload);
-      debugger_pop_group();
     }
-
     debugger_pop_group();
 //    memory_region_sync_dirty_bitmap(d->vram); //FIXME: Is this necessary?
+
 }
 
 static void pgraph_init(PGRAPHState *pg)
@@ -2391,50 +2735,35 @@ static void pgraph_init(PGRAPHState *pg)
                              "GL_ARB_vertex_array_bgra",
                              extensions));
 
+    assert(glo_check_extension((const GLubyte *)
+                             "GL_EXT_packed_depth_stencil",
+                             extensions));
+
 #ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
     assert(glo_check_extension((const GLubyte *)
                              "GL_EXT_transform_feedback",
                              extensions));
 #endif
 
+#ifdef LP
+    assert(glo_check_extension((const GLubyte *)
+                             "GL_ARB_color_buffer_float",
+                             extensions));
+
+    assert(glo_check_extension((const GLubyte *)
+                             "GL_ARB_texture_float",
+                             extensions));
+
+    test_launchprogram();
+#endif
 
     GLint max_vertex_attributes;
     glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &max_vertex_attributes);
     assert(max_vertex_attributes >= NV2A_GPU_VERTEXSHADER_ATTRIBUTES);
 
-    glGenFramebuffersEXT(1, &pg->gl_framebuffer);
-    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, pg->gl_framebuffer);
-
-    glGenRenderbuffersEXT(1, &pg->gl_color_renderbuffer);
-    glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, pg->gl_color_renderbuffer);
-    glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, GL_RGBA8,
-                             FB_W, FB_H);
-    glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,
-                                 GL_COLOR_ATTACHMENT0_EXT,
-                                 GL_RENDERBUFFER_EXT,
-                                 pg->gl_color_renderbuffer);
-
-    glGenRenderbuffersEXT(1, &pg->gl_zeta_renderbuffer);
-    glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, pg->gl_zeta_renderbuffer);
-    glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, GL_DEPTH24_STENCIL8_EXT,
-                             FB_W, FB_H);
-    glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,
-                                 GL_DEPTH_ATTACHMENT_EXT,
-                                 GL_RENDERBUFFER_EXT,
-                                 pg->gl_zeta_renderbuffer);
-    glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,
-                                 GL_STENCIL_ATTACHMENT_EXT,
-                                 GL_RENDERBUFFER_EXT,
-                                 pg->gl_zeta_renderbuffer);
-
-
-
-    assert(glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT)
-            == GL_FRAMEBUFFER_COMPLETE_EXT);
-
     //glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
 
-    pg->shaders_dirty = true;
+    pg->dirty.shaders = true;
 
     /* generate textures */
     debugger_push_group("NV2A: generate textures");
@@ -2445,10 +2774,13 @@ static void pgraph_init(PGRAPHState *pg)
     }
     debugger_pop_group();
 
-    pg->shader_cache = g_hash_table_new(shader_hash, shader_equal);
+    //FIXME: Move to cache init routine
+    pg->cache.shader = g_hash_table_new(shader_hash, shader_equal);
+    pg->cache.renderbuffer = g_hash_table_new(renderbuffer_hash, renderbuffer_equal);
+    pg->cache.framebuffer = g_hash_table_new(framebuffer_hash, framebuffer_equal);
+    //pgraph_cache_init(pg); ?
 
     assert(glGetError() == GL_NO_ERROR);
-
 
     debugger_pop_group();
 
@@ -2468,9 +2800,12 @@ static void pgraph_destroy(PGRAPHState *pg)
 
     debugger_push_group("NV2A: pgraph_destroy");
 
+//FIXME: Go through list of framebuffers for cleanup
+#if 0
     glDeleteRenderbuffersEXT(1, &pg->gl_color_renderbuffer);
     glDeleteRenderbuffersEXT(1, &pg->gl_zeta_renderbuffer);
     glDeleteFramebuffersEXT(1, &pg->gl_framebuffer);
+#endif
 
     for (i = 0; i < NV2A_GPU_MAX_TEXTURES; i++) {
         Texture *texture = &pg->textures[i];
@@ -2566,8 +2901,11 @@ static void pgraph_method(NV2A_GPUState *d,
         image_blit->width = parameter & 0xFFFF;
         image_blit->height = parameter >> 16;
 
+pgraph_update_surfaces(d,false,true,true);
+
         /* I guess this kicks it off? */
-        if (image_blit->operation == NV09F_SET_OPERATION_SRCCOPY) { 
+        if (image_blit->operation == NV09F_SET_OPERATION_SRCCOPY) {
+            debugger_push_group("NV09F_SET_OPERATION_SRCCOPY");
             GraphicsObject *context_surfaces_obj =
                 lookup_graphics_object(pg, image_blit->context_surfaces);
             assert(context_surfaces_obj);
@@ -2615,7 +2953,7 @@ static void pgraph_method(NV2A_GPUState *d,
                 memmove(dest_row, source_row,
                         image_blit->width * bytes_per_pixel);
             }
-
+            debugger_pop_group();
         } else {
             assert(false);
         }
@@ -2657,6 +2995,11 @@ static void pgraph_method(NV2A_GPUState *d,
         pgraph_update_surfaces(d, false, true, true);
         break;
 
+    case NV097_FLIP_INCREMENT_WRITE:
+        pgraph_update_surfaces(d, false, true, true);
+        //FIXME!
+        break;
+
     case NV097_FLIP_STALL:
         pgraph_update_surfaces(d, false, true, true);
 
@@ -2667,10 +3010,11 @@ static void pgraph_method(NV2A_GPUState *d,
         //       - When D3D completes a frame?
         //       - ...
         debugger_finish_frame();
-
+#if 1 //HACK: Set to 0 for AntiAlias or SetBackBuffer code
         qemu_mutex_unlock(&pg->lock);
         qemu_sem_wait(&pg->read_3d);
         qemu_mutex_lock(&pg->lock);
+#endif
         break;
     
     case NV097_SET_CONTEXT_DMA_NOTIFIES:
@@ -2706,10 +3050,10 @@ printf("Set color dma object at 0x%x\n",parameter);
 printf("Set zeta dma object at 0x%x\n",parameter);
         break;
     case NV097_SET_CONTEXT_DMA_VERTEX_A:
-        kelvin->dma_vertex_a = parameter;
+        pg->dma_vertex_a = parameter;
         break;
     case NV097_SET_CONTEXT_DMA_VERTEX_B:
-        kelvin->dma_vertex_b = parameter;
+        pg->dma_vertex_b = parameter;
         break;
     case NV097_SET_CONTEXT_DMA_SEMAPHORE:
         kelvin->dma_semaphore = parameter;
@@ -2722,6 +3066,8 @@ printf("Set zeta dma object at 0x%x\n",parameter);
             GET_MASK(parameter, NV097_SET_SURFACE_CLIP_HORIZONTAL_X);
         pg->clip_width =
             GET_MASK(parameter, NV097_SET_SURFACE_CLIP_HORIZONTAL_WIDTH);
+
+        pg->dirty.framebuffer = true;
         break;
     case NV097_SET_SURFACE_CLIP_VERTICAL:
         pgraph_update_surfaces(d, false, true, true);
@@ -2730,6 +3076,8 @@ printf("Set zeta dma object at 0x%x\n",parameter);
             GET_MASK(parameter, NV097_SET_SURFACE_CLIP_VERTICAL_Y);
         pg->clip_height =
             GET_MASK(parameter, NV097_SET_SURFACE_CLIP_VERTICAL_HEIGHT);
+
+        pg->dirty.framebuffer = true;
         break;
     case NV097_SET_SURFACE_FORMAT:
         pgraph_update_surfaces(d, false, true, true);
@@ -2747,14 +3095,7 @@ printf("Set zeta dma object at 0x%x\n",parameter);
         pg->surface_swizzle_height_shift = 
             GET_MASK(parameter, NV097_SET_SURFACE_FORMAT_HEIGHT);
 
-        debugger_message("NV2A: Changed to %i x %i (Anti-Alias: %i; Type %i)\n",
-                         1 <<  pg->surface_swizzle_width_shift,
-                         1 <<  pg->surface_swizzle_height_shift,
-                         pg->surface_anti_aliasing,
-                         pg->surface_type);
-
-        assert(FB_W >> pg->surface_swizzle_width_shift); // 4096 width max
-        assert(FB_H >> pg->surface_swizzle_height_shift); // 4096 height max
+        pg->dirty.framebuffer = true;
         break;
     case NV097_SET_SURFACE_PITCH:
         pgraph_update_surfaces(d, false, true, true);
@@ -2781,65 +3122,88 @@ printf("Set zeta dma object at 0x%x\n",parameter);
             NV097_SET_COMBINER_ALPHA_ICW + 28:
         slot = (class_method - NV097_SET_COMBINER_ALPHA_ICW) / 4;
         pg->regs[NV_PGRAPH_COMBINEALPHAI0 + slot*4] = parameter;
-        pg->shaders_dirty = true;
+        pg->dirty.shaders = true;
         break;
 
     case NV097_SET_COMBINER_SPECULAR_FOG_CW0:
         pg->regs[NV_PGRAPH_COMBINESPECFOG0] = parameter;
-        pg->shaders_dirty = true;
+        pg->dirty.shaders = true;
         break;
 
     case NV097_SET_COMBINER_SPECULAR_FOG_CW1:
         pg->regs[NV_PGRAPH_COMBINESPECFOG1] = parameter;
-        pg->shaders_dirty = true;
+        pg->dirty.shaders = true;
         break;
 
     case NV097_SET_STENCIL_TEST_ENABLE:
         SET_PG_REG(pg, CONTROL_1, STENCIL_TEST_ENABLE, parameter);
-        pg->stencil_test_enabled_dirty = true;
+        pg->dirty.stencil_test = true;
         break;
 
     case NV097_SET_STENCIL_OP_FAIL:
         SET_PG_REG(pg, CONTROL_2, STENCIL_OP_FAIL,
                    map_method_to_register_stencil_op(parameter));
-        pg->stencil_test_op_dirty = true;
+        pg->dirty.stencil_test_op = true;
         break;
     case NV097_SET_STENCIL_OP_ZFAIL:
         SET_PG_REG(pg, CONTROL_2, STENCIL_OP_ZFAIL,
                    map_method_to_register_stencil_op(parameter));
-        pg->stencil_test_op_dirty = true;
+        pg->dirty.stencil_test_op = true;
         break;
     case NV097_SET_STENCIL_OP_ZPASS:
         SET_PG_REG(pg, CONTROL_2, STENCIL_OP_ZPASS,
                    map_method_to_register_stencil_op(parameter));
-        pg->stencil_test_op_dirty = true; 
+        pg->dirty.stencil_test_op = true; 
         break;
 
     case NV097_SET_STENCIL_FUNC_REF:
         SET_PG_REG(pg, CONTROL_1, STENCIL_REF, parameter);
-        pg->stencil_test_func_dirty = true;
+        pg->dirty.stencil_test_func = true;
         break;
     case NV097_SET_STENCIL_FUNC_MASK:
         SET_PG_REG(pg, CONTROL_1, STENCIL_MASK_READ, parameter);
-        pg->stencil_test_func_dirty = true;
+        pg->dirty.stencil_test_func = true;
         break;
     case NV097_SET_STENCIL_FUNC:
         SET_PG_REG(pg, CONTROL_1, STENCIL_FUNC,
                    map_method_to_register_func(parameter));
-        pg->stencil_test_func_dirty = true;
+        pg->dirty.stencil_test_func = true;
         break;
     case NV097_SET_COLOR_MASK:
-        pg->color_mask = parameter;
-        pg->color_mask_dirty = true;
+        SET_PG_REG(pg, CONTROL_0, ALPHA_WRITE_ENABLE,
+                   GET_MASK(parameter, NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE));
+        SET_PG_REG(pg, CONTROL_0, RED_WRITE_ENABLE,
+                   GET_MASK(parameter, NV097_SET_COLOR_MASK_RED_WRITE_ENABLE));
+        SET_PG_REG(pg, CONTROL_0, GREEN_WRITE_ENABLE,
+                   GET_MASK(parameter, NV097_SET_COLOR_MASK_GREEN_WRITE_ENABLE));
+        SET_PG_REG(pg, CONTROL_0, BLUE_WRITE_ENABLE,
+                   GET_MASK(parameter, NV097_SET_COLOR_MASK_BLUE_WRITE_ENABLE));
+        pg->dirty.color_mask = true;
         break;
     case NV097_SET_STENCIL_MASK:
-        SET_MASK(pg->regs[NV_PGRAPH_CONTROL_1],
-                 NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE, parameter);
-        pg->stencil_mask_dirty = true;
+        SET_PG_REG(pg, CONTROL_1, STENCIL_MASK_WRITE, parameter);
+        pg->dirty.stencil_mask = true;
+        break;
+
+    case NV097_SET_CONTROL0:
+        SET_PG_REG(pg, CONTROL_0, CSCONVERT,
+                   GET_MASK(parameter, NV097_SET_CONTROL0_COLOR_SPACE_CONVERT)); //XXX: Not emulated
+        SET_PG_REG(pg, CONTROL_3, PREMULTALPHA,
+                   GET_MASK(parameter, NV097_SET_CONTROL0_PREMULTIPLIEDALPHA)); //XXX: Not emulated
+        SET_PG_REG(pg, CONTROL_3, TEXTUREPERSPECTIVE,
+                   GET_MASK(parameter, NV097_SET_CONTROL0_TEXTUREPERSPECTIVE)); //XXX: Not emulated
+        SET_PG_REG(pg, CONTROL_0, Z_PERSPECTIVE_ENABLE,
+                   GET_MASK(parameter, NV097_SET_CONTROL0_Z_PERSPECTIVE_ENABLE)); //XXX: Not emulated
+        SET_PG_REG(pg, SETUPRASTER, Z_FORMAT,
+                   GET_MASK(parameter, NV097_SET_CONTROL0_Z_FORMAT)); //XXX: Not emulated
+        SET_PG_REG(pg, CONTROL_0, STENCIL_WRITE_ENABLE,
+                   GET_MASK(parameter, NV097_SET_CONTROL0_STENCIL_WRITE_ENABLE));
+        /* We use the stencil mask to turn off the stencil writes */
+        pg->dirty.stencil_mask = true;
         break;
     case NV097_SET_DEPTH_MASK:
-        pg->depth_mask = parameter;
-        pg->depth_mask_dirty = true;
+        SET_PG_REG(pg, CONTROL_0, ZWRITEENABLE, parameter);
+        pg->dirty.depth_mask = true;
         break;
 
     case NV097_SET_CLIP_MIN:
@@ -2853,6 +3217,7 @@ printf("Set zeta dma object at 0x%x\n",parameter);
             NV097_SET_COMPOSITE_MATRIX + 0x3c:
         slot = (class_method - NV097_SET_COMPOSITE_MATRIX) / 4;
         pg->composite_matrix[slot] = *(float*)&parameter;
+        pg->FIXME_REMOVEME_comp_src = 2;
         break;
 
     CASE_4(NV097_SET_TEXTURE_MATRIX_ENABLE, 4):
@@ -2887,100 +3252,181 @@ printf("Set zeta dma object at 0x%x\n",parameter);
         slot = (class_method - NV097_SET_VIEWPORT_OFFSET) / 4;
 
         //FIXME: Why is this happening?! Is it documented anywhere?
-        kelvin->constants[59].data[slot] = parameter;
-        kelvin->constants[59].dirty = true;
+        pg->constants[59].data[slot] = parameter;
+        pg->constants[59].dirty = true;
         break;
 
     case NV097_SET_COMBINER_FACTOR0 ...
             NV097_SET_COMBINER_FACTOR0 + 28:
         slot = (class_method - NV097_SET_COMBINER_FACTOR0) / 4;
         pg->regs[NV_PGRAPH_COMBINEFACTOR0 + slot*4] = parameter;
-        pg->shaders_dirty = true;
+        pg->dirty.shaders = true;
         break;
 
     case NV097_SET_COMBINER_FACTOR1 ...
             NV097_SET_COMBINER_FACTOR1 + 28:
         slot = (class_method - NV097_SET_COMBINER_FACTOR1) / 4;
         pg->regs[NV_PGRAPH_COMBINEFACTOR1 + slot*4] = parameter;
-        pg->shaders_dirty = true;
+        pg->dirty.shaders = true;
         break;
 
     case NV097_SET_COMBINER_ALPHA_OCW ...
             NV097_SET_COMBINER_ALPHA_OCW + 28:
         slot = (class_method - NV097_SET_COMBINER_ALPHA_OCW) / 4;
         pg->regs[NV_PGRAPH_COMBINEALPHAO0 + slot*4] = parameter;
-        pg->shaders_dirty = true;
+        pg->dirty.shaders = true;
         break;
 
     case NV097_SET_COMBINER_COLOR_ICW ...
             NV097_SET_COMBINER_COLOR_ICW + 28:
         slot = (class_method - NV097_SET_COMBINER_COLOR_ICW) / 4;
         pg->regs[NV_PGRAPH_COMBINECOLORI0 + slot*4] = parameter;
-        pg->shaders_dirty = true;
+        pg->dirty.shaders = true;
         break;
 
     case NV097_SET_VIEWPORT_SCALE ...
             NV097_SET_VIEWPORT_SCALE + 12:
 
         slot = (class_method - NV097_SET_VIEWPORT_SCALE) / 4;
-        printf("SET_VIEWPORT_SCALE\n");
         //FIXME: Why is this happening? Same as NV097_SET_VIEWPORT_OFFSET!
-        kelvin->constants[58].data[slot] = parameter;
-        kelvin->constants[58].dirty = true;
+        pg->constants[58].data[slot] = parameter;
+        pg->constants[58].dirty = true;
         break;
 
-    case NV097_SET_TRANSFORM_PROGRAM ...
-            NV097_SET_TRANSFORM_PROGRAM + 0x7c:
+    CASE_RANGE(NV097_SET_TRANSFORM_PROGRAM,32) {
 
-        slot = (class_method - NV097_SET_TRANSFORM_PROGRAM) / 4;
-
-        assert(kelvin->vertexshader_load_slot < (NV2A_GPU_MAX_VERTEXSHADER_LENGTH*4));
-        vertexshader = &kelvin->vertexshader;
-        //printf("Load prog slot %i (+%i?), 0x%08X\n",kelvin->vertexshader_load_slot,slot,parameter);
-        vertexshader->program_data[kelvin->vertexshader_load_slot++] = parameter;
+        assert(pg->vertexshader_load_slot < (NV2A_GPU_MAX_VERTEXSHADER_LENGTH*4));
+        vertexshader = &pg->vertexshader;
+        //printf("Load prog slot %i (+%i?), 0x%08X\n",pg->vertexshader_load_slot,slot,parameter);
+        vertexshader->program_data[pg->vertexshader_load_slot++] = parameter;
         vertexshader->dirty = true;
         break;
+    }
+    CASE_RANGE(NV097_SET_TRANSFORM_CONSTANT,32) {
 
-    case NV097_SET_TRANSFORM_CONSTANT ...
-            NV097_SET_TRANSFORM_CONSTANT + 0x7c:
-
-        slot = (class_method - NV097_SET_TRANSFORM_CONSTANT) / 4;
-
-        //printf("Setting c[%i].%i (c%i) = %f\n",kelvin->constant_load_slot/4,kelvin->constant_load_slot%4,kelvin->constant_load_slot/4-96,*(float*)&parameter);
-        assert((kelvin->constant_load_slot/4) < NV2A_GPU_VERTEXSHADER_CONSTANTS);
-        constant = &kelvin->constants[kelvin->constant_load_slot/4];
-        if ((kelvin->constant_load_slot/4) == 58) {
+        //printf("Setting c[%i].%i (c%i) = %f\n",pg->constant_load_slot/4,pg->constant_load_slot%4,pg->constant_load_slot/4-96,*(float*)&parameter);
+        assert((pg->constant_load_slot/4) < NV2A_GPU_VERTEXSHADER_CONSTANTS);
+        constant = &pg->constants[pg->constant_load_slot/4];
+        if ((pg->constant_load_slot/4) == 58) {
             printf("SET_TRANSFORM_CONSTANT viewport_scale\n");
         }
-        constant->data[kelvin->constant_load_slot%4] = parameter;
-        kelvin->constant_load_slot++;
+        constant->data[pg->constant_load_slot%4] = parameter;
+        pg->constant_load_slot++;
         constant->dirty = true;
+
+        pg->FIXME_REMOVEME_comp_src = 1;
         break;
-
-    case NV097_SET_VERTEX4F ...
-            NV097_SET_VERTEX4F + 12: {
-
-        slot = (class_method - NV097_SET_VERTEX4F) / 4;
-
-        assert(kelvin->inline_buffer_length < NV2A_GPU_MAX_BATCH_LENGTH);
-        
+    }
+    CASE_RANGE(NV097_SET_VERTEX3F,3) {
         InlineVertexBufferEntry *entry =
-            &kelvin->inline_buffer[kelvin->inline_buffer_length];
-
-        entry->position[slot] = parameter;
-        if (slot == 3) {
-            entry->diffuse =
-                kelvin->vertex_attributes[NV2A_GPU_VERTEX_ATTR_DIFFUSE].inline_value;
-            kelvin->inline_buffer_length++;
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* vertex = (float*)entry->v[NV2A_GPU_VERTEX_ATTR_POSITION];
+        vertex[slot] = *(float*)&parameter;
+        if (slot == 2) {
+            pg->inline_buffer_length++;
+            assert(pg->inline_buffer_length < NV2A_GPU_MAX_BATCH_LENGTH);
         }
         break;
     }
+    CASE_RANGE(NV097_SET_VERTEX4F,4) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* vertex = (float*)entry->v[NV2A_GPU_VERTEX_ATTR_POSITION];
+        vertex[slot] = *(float*)&parameter;
+        if (slot == 3) {
+            pg->inline_buffer_length++;
+            assert(pg->inline_buffer_length < NV2A_GPU_MAX_BATCH_LENGTH);
+        }
+        break;
+    }
+    CASE_RANGE(NV097_SET_NORMAL3F,3) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* normal = (float*)entry->v[NV2A_GPU_VERTEX_ATTR_NORMAL];
+        normal[slot] = *(float*)&parameter;
+        break;
+    }
+    CASE_RANGE(NV097_SET_DIFFUSE_COLOR4F,4) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* diffuse_color = (float*)entry->v[NV2A_GPU_VERTEX_ATTR_DIFFUSE];
+        diffuse_color[slot] = *(float*)&parameter;
+        break;
+    }
+    CASE_RANGE(NV097_SET_DIFFUSE_COLOR3F,3) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* diffuse_color = (float*)entry->v[NV2A_GPU_VERTEX_ATTR_DIFFUSE];
+        diffuse_color[slot] = *(float*)&parameter;
+        break;
+    }
+    CASE_RANGE(NV097_SET_DIFFUSE_COLOR4UB,1) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        uint32_t* diffuse_color = (uint32_t*)entry->v[NV2A_GPU_VERTEX_ATTR_DIFFUSE];
+        diffuse_color[0] = parameter;
+        break;
+    }
+    CASE_RANGE(NV097_SET_TEXCOORD0_2F,2) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* texcoord0 = (float*)entry->v[NV2A_GPU_VERTEX_ATTR_TEXTURE0];
+        texcoord0[slot] = *(float*)&parameter;
+        break;
+    }
+    CASE_RANGE(NV097_SET_TEXCOORD0_4F,4) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* texcoord0 = (float*)entry->v[NV2A_GPU_VERTEX_ATTR_TEXTURE0];
+        texcoord0[slot] = *(float*)&parameter;
+        break;
+    }
+    CASE_RANGE(NV097_SET_TEXCOORD1_2F,2) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* texcoord1 = (float*)entry->v[NV2A_GPU_VERTEX_ATTR_TEXTURE1];
+        texcoord1[slot] = *(float*)&parameter;
+        break;
+    }
+    CASE_RANGE(NV097_SET_TEXCOORD1_4F,4) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* texcoord1 = (float*)entry->v[NV2A_GPU_VERTEX_ATTR_TEXTURE1];
+        texcoord1[slot] = *(float*)&parameter;
+        break;
+    }
+    CASE_RANGE(NV097_SET_TEXCOORD2_2F,2) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* texcoord2 = (float*)entry->v[NV2A_GPU_VERTEX_ATTR_TEXTURE2];
+        texcoord2[slot] = *(float*)&parameter;
+        break;
+    }
+    CASE_RANGE(NV097_SET_TEXCOORD2_4F,4) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* texcoord2 = (float*)entry->v[NV2A_GPU_VERTEX_ATTR_TEXTURE2];
+        texcoord2[slot] = *(float*)&parameter;
+        break;
+    }
+    CASE_RANGE(NV097_SET_TEXCOORD3_2F,2) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* texcoord3 = (float*)entry->v[NV2A_GPU_VERTEX_ATTR_TEXTURE3];
+        texcoord3[slot] = *(float*)&parameter;
+        break;
+    }
+    CASE_RANGE(NV097_SET_TEXCOORD3_4F,4) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* texcoord3 = (float*)entry->v[NV2A_GPU_VERTEX_ATTR_TEXTURE3];
+        texcoord3[slot] = *(float*)&parameter;
+        break;
+    }
 
-    case NV097_SET_VERTEX_DATA_ARRAY_FORMAT ...
-            NV097_SET_VERTEX_DATA_ARRAY_FORMAT + 0x3c:
+    CASE_RANGE(NV097_SET_VERTEX_DATA_ARRAY_FORMAT,16) {
 
-        slot = (class_method - NV097_SET_VERTEX_DATA_ARRAY_FORMAT) / 4;
-        vertex_attribute = &kelvin->vertex_attributes[slot];
+        vertex_attribute = &pg->vertex_attributes[slot];
 
         vertex_attribute->format =
             GET_MASK(parameter, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE);
@@ -2989,14 +3435,16 @@ printf("Set zeta dma object at 0x%x\n",parameter);
         vertex_attribute->stride =
             GET_MASK(parameter, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_STRIDE);
 
+        debugger_message("Setting attributes for %d, count=%d, stride=%d, format=0x%x",slot,vertex_attribute->count,vertex_attribute->stride,vertex_attribute->format);
 
+        vertex_attribute->gl_size = vertex_attribute->count;
         switch (vertex_attribute->format) {
         case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_D3D:
+            vertex_attribute->gl_size = GL_BGRA; // http://www.opengl.org/registry/specs/ARB/vertex_array_bgra.txt
             vertex_attribute->gl_type = GL_UNSIGNED_BYTE;
             vertex_attribute->gl_normalize = GL_TRUE;
             vertex_attribute->size = 1;
             assert(vertex_attribute->count == 4);
-            vertex_attribute->count = GL_BGRA; // http://www.opengl.org/registry/specs/ARB/vertex_array_bgra.txt
             vertex_attribute->needs_conversion = false; //FIXME: Remove once the new system works
             vertex_attribute->converter = NULL;
         case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_OGL:
@@ -3008,7 +3456,8 @@ printf("Set zeta dma object at 0x%x\n",parameter);
             break;
         case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_S1:
             vertex_attribute->gl_type = GL_SHORT;
-            vertex_attribute->gl_normalize = GL_FALSE;
+//            vertex_attribute->gl_normalize = GL_TRUE; //(slot == 0)?GL_FALSE:GL_TRUE; //FIXME: Not sure, but wreckless uses this for texcoords and needs it normalized, the dashboards uses it for pos and needs it unnormalized
+            vertex_attribute->gl_normalize = GL_TRUE;
             vertex_attribute->size = 2;
             vertex_attribute->needs_conversion = false; //FIXME: Remove once the new system works
             vertex_attribute->converter = NULL;
@@ -3021,11 +3470,12 @@ printf("Set zeta dma object at 0x%x\n",parameter);
             vertex_attribute->converter = NULL;
             break;
         case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_S32K:
-            vertex_attribute->gl_type = GL_UNSIGNED_SHORT;
-            vertex_attribute->gl_normalize = GL_FALSE;
+            vertex_attribute->gl_type = GL_SHORT;
+            vertex_attribute->gl_normalize = GL_FALSE; //(slot == 0)?GL_FALSE:GL_TRUE; //FIXME: see note in _S1
             vertex_attribute->size = 2;
             vertex_attribute->needs_conversion = false; //FIXME: Remove once the new system works
             vertex_attribute->converter = NULL;
+            assert(0); //Untested
             break;
         case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_CMP:
             /* "3 signed, normalized components packed in 32-bits. (11,11,10)" */
@@ -3038,6 +3488,7 @@ printf("Set zeta dma object at 0x%x\n",parameter);
             vertex_attribute->converter = convert_cmp_to_f;
             break;
         default:
+            printf("Unknown vertex format: %d\n", vertex_attribute->format);
             assert(false);
             break;
         }
@@ -3052,26 +3503,31 @@ printf("Set zeta dma object at 0x%x\n",parameter);
         }
 
         break;
-    case NV097_SET_VERTEX_DATA_ARRAY_OFFSET ...
-            NV097_SET_VERTEX_DATA_ARRAY_OFFSET + 0x3c:
+    }
+    CASE_RANGE(NV097_SET_VERTEX_DATA_ARRAY_OFFSET,16) {
 
-        slot = (class_method - NV097_SET_VERTEX_DATA_ARRAY_OFFSET) / 4;
-
-        kelvin->vertex_attributes[slot].dma_select =
+        pg->vertex_attributes[slot].dma_select =
             parameter & 0x80000000;
-        kelvin->vertex_attributes[slot].offset =
+        pg->vertex_attributes[slot].offset =
             parameter & 0x7fffffff;
 
-        kelvin->vertex_attributes[slot].converted_elements = 0;
+        pg->vertex_attributes[slot].converted_elements = 0;
 
         break;
-
+    }
     case NV097_SET_BEGIN_END: {
 
-        bool writeZeta = pg->depth_mask ||
-                         GET_MASK(pg->regs[NV_PGRAPH_CONTROL_1],
-                                  NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE);
-        bool writeColor = pg->color_mask;
+        /* Stencil and Depth test would disable stencil / depth */
+        bool writeDepth =  GET_PG_REG(pg, CONTROL_0, ZWRITEENABLE) &&
+                           GET_PG_REG(pg, CONTROL_0, ZENABLE);
+        bool writeStencil = GET_PG_REG(pg, CONTROL_0, STENCIL_WRITE_ENABLE) &&
+                            GET_PG_REG(pg, CONTROL_1, STENCIL_TEST_ENABLE) &&
+                            GET_PG_REG(pg, CONTROL_1, STENCIL_MASK_WRITE);
+        bool writeZeta = writeDepth || writeStencil;
+        bool writeColor = GET_PG_REG(pg, CONTROL_0, ALPHA_WRITE_ENABLE) ||
+                          GET_PG_REG(pg, CONTROL_0, RED_WRITE_ENABLE) ||
+                          GET_PG_REG(pg, CONTROL_0, GREEN_WRITE_ENABLE) ||
+                          GET_PG_REG(pg, CONTROL_0, BLUE_WRITE_ENABLE);
 
         if (parameter != NV097_SET_BEGIN_END_OP_END) {
 
@@ -3084,64 +3540,51 @@ printf("Set zeta dma object at 0x%x\n",parameter);
                 debugger_push_group(buffer);
             }
 
+            /* Upload the surface to the GPU */
             pgraph_update_surfaces(d, true, writeZeta, writeColor);
+            
 
             /* FIXME: Skip most stuff if writeZeta and writeColor are both false */
             /* FIXME: Use simplified shader for "zeta only" (color masked) writes? */
 
-//FIXME: Use offset?
-assert(pg->clip_x == 0);
-assert(pg->clip_y == 0);
-int w = pg->clip_width;
-int h =  pg->clip_height;
-//FIXME: Probably do this elsewhere..?
-// Compensate HW supersampling
-switch (pg->surface_anti_aliasing) {
-case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_1:
-    //FIXME: Turn off hw supersampling?!
-    break;
-case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_CORNER_2:
-    w /= 2;
-    //FIXME: Turn on hw supersampling?!
-    break;
-case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_SQUARE_OFFSET_4:
-    w /= 2;
-    h /= 2;
-    //FIXME: Turn on hw supersampling?!
-    break;
-default:
-    assert(0);
-}
-glViewport(0, 0, w, h);
-static unsigned int draw_call = 0;
-draw_call++;
-float zclip_max = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMAX];
-float zclip_min = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMIN];
-VertexAttribute* v0 = &kelvin->vertex_attributes[0];
-constant = &kelvin->constants[58];
-#if 0
-printf("%i \t%i: \tCLIP %ix%i [%.3f;%.3f] \tVP: %.3fx%.3fx%.3f\tAA: %i, PL: %s, v0 { count: %i, .type: %i, .norm: %i }\n",
-       debugger_frame, draw_call,
-       pg->clip_width,pg->clip_height, zclip_min, zclip_max,
-       *(float*)&constant->data[0],*(float*)&constant->data[1],*(float*)&constant->data[2],
-       pg->surface_anti_aliasing,
-       GET_MASK(pg->regs[NV_PGRAPH_CSV0_D],NV_PGRAPH_CSV0_D_MODE)?"VSH":"FFP",
-       v0->count,v0->gl_type,v0->gl_normalize);
+#ifdef FORCE_NOXY
+            CHECKXY(pg)
+#else
+            //FIXME: Use offset?
+            assert(pg->clip_x == 0);
+            assert(pg->clip_y == 0);
+#endif
+            unsigned int w;
+            unsigned int h;
+            get_surface_dimensions(pg, &w, &h);
+
+            glViewport(0, 0, w, h);
+            static unsigned int draw_call = 0;
+            draw_call++;
+            float zclip_max = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMAX];
+            float zclip_min = *(float*)&pg->regs[NV_PGRAPH_ZCLIPMIN];
+            VertexAttribute* v0 = &pg->vertex_attributes[0];
+            constant = &pg->constants[58];
+#if 1
+            debugger_message("frame: %i call: %i: clip: %ix%i [%.3f;%.3f] VP: %.3fx%.3fx%.3f AA: %i, PL: %s, v0 { count: %i, .type: %i, .norm: %i }",
+            debugger_frame, draw_call,
+            pg->clip_width,pg->clip_height, zclip_min, zclip_max,
+            *(float*)&constant->data[0],*(float*)&constant->data[1],*(float*)&constant->data[2],
+            pg->surface_anti_aliasing,
+            GET_MASK(pg->regs[NV_PGRAPH_CSV0_D],NV_PGRAPH_CSV0_D_MODE)?"VSH":"FFP",
+            v0->count,v0->gl_type,v0->gl_normalize);
 #endif
 
-            update_gl_depth_mask(pg);
-            update_gl_stencil_mask(pg);
-            update_gl_color_mask(pg);
+            NV2A_GPU_DPRINTF("Frame %d, Draw call %d\n", debugger_frame, draw_call);
 
-            update_gl_stencil_test(pg);
+            pgraph_update_state(pg);
 
-            pgraph_bind_shaders(pg, kelvin);
+            pgraph_bind_shaders(pg);
 
             pgraph_bind_textures(d);
-            kelvin_bind_vertex_attributes(d, kelvin);
 
 
-            kelvin->gl_primitive_mode = kelvin_primitive_map[parameter];
+            pg->gl_primitive_mode = kelvin_primitive_map[parameter];
 
 #ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
             if (GET_MASK(pg->regs[NV_PGRAPH_CSV0_D],
@@ -3150,78 +3593,84 @@ printf("%i \t%i: \tCLIP %ix%i [%.3f;%.3f] \tVP: %.3fx%.3fx%.3f\tAA: %i, PL: %s, 
             }
 #endif
 
-            kelvin->inline_elements_length = 0;
-            kelvin->inline_array_length = 0;
-            kelvin->inline_buffer_length = 0;
+            pg->inline_elements_length = 0;
+            pg->inline_array_length = 0;
+            pg->inline_buffer_length = 0;
 
         } else {
 
-            if (kelvin->inline_buffer_length) {
-                assert(!kelvin->inline_array_length);
-                assert(!kelvin->inline_elements_length);
-                glEnableVertexAttribArray(NV2A_GPU_VERTEX_ATTR_POSITION);
-                glVertexAttribPointer(NV2A_GPU_VERTEX_ATTR_POSITION,
-                        4,
-                        GL_FLOAT,
-                        GL_FALSE,
-                        sizeof(InlineVertexBufferEntry),
-                        kelvin->inline_buffer);
+            if (pg->inline_buffer_length) {
+                assert(!pg->inline_array_length);
+                assert(!pg->inline_elements_length);
 
-                glEnableVertexAttribArray(NV2A_GPU_VERTEX_ATTR_DIFFUSE);
-                glVertexAttribPointer(NV2A_GPU_VERTEX_ATTR_DIFFUSE,
-                        4,
-                        GL_UNSIGNED_BYTE,
-                        GL_TRUE,
-                        sizeof(InlineVertexBufferEntry),
-                        &kelvin->inline_buffer[0].diffuse);
-
-
-                assert(0); //FIXME: This code path needs a major rewrite..
-
-                glDrawArrays(kelvin->gl_primitive_mode,
-                             0, kelvin->inline_buffer_length);
-            } else if (kelvin->inline_array_length) {
-                assert(!kelvin->inline_buffer_length);
-                assert(!kelvin->inline_elements_length);
+                for(i = 0; i < 16; i++) {
+                    glVertexAttribPointer(i, 4, GL_FLOAT, GL_FALSE, sizeof(pg->inline_buffer[0]), pg->inline_buffer[0].v[i]);
+                    glEnableVertexAttribArray(i);
+                }
+  
+//                assert(0); //FIXME: This code path needs a major rewrite..
+                debugger_message("BAD!");
+                debugger_message("DRAW: Inline Buffer");
+                glDrawArrays(pg->gl_primitive_mode,
+                             0, pg->inline_buffer_length);
+            } else if (pg->inline_array_length) {
+                assert(!pg->inline_buffer_length);
+                assert(!pg->inline_elements_length);
                 unsigned int vertex_size =
-                    kelvin_bind_inline_array(kelvin);
+                    pgraph_bind_inline_array(d);
                 unsigned int index_count =
-                    kelvin->inline_array_length*4 / vertex_size;
-                
-                kelvin_bind_converted_vertex_attributes(d, kelvin,
-                    true, index_count);
-                glDrawArrays(kelvin->gl_primitive_mode,
+                    pg->inline_array_length*4 / vertex_size;
+                debugger_message("%d bytes of inline data, vertex is %d bytes",pg->inline_array_length*4,vertex_size);
+                              
+                pgraph_bind_converted_vertex_attributes(d, true, index_count);
+                debugger_message("DRAW: Inline Array");
+      
+/*
+                unsigned int p = pg->inline_array;
+                if (vertex_size == ((4*2)*2)) {
+                    glVertexAttribPointer(0,2,GL_FLOAT,(4*2)*2,p);
+                    glVertexAttribPointer(9,2,GL_FLOAT,(4*2)*2,p+4*2);
+                }
+*/
+                glDrawArrays(pg->gl_primitive_mode,
                              0, index_count);
-            } else if (kelvin->inline_elements_length) {
-                assert(!kelvin->inline_array_length);
-                assert(!kelvin->inline_buffer_length);
+            } else if (pg->inline_elements_length) {
+                assert(!pg->inline_array_length);
+                assert(!pg->inline_buffer_length);
 
                 uint32_t max_element = 0;
                 uint32_t min_element = (uint32_t)-1;
-                for (i=0; i<kelvin->inline_elements_length; i++) {
-                    max_element = MAX(kelvin->inline_elements[i], max_element);
-                    min_element = MIN(kelvin->inline_elements[i], min_element);
+                for (i=0; i<pg->inline_elements_length; i++) {
+                    max_element = MAX(pg->inline_elements[i], max_element);
+                    min_element = MIN(pg->inline_elements[i], min_element);
                 }
+
+                pgraph_bind_vertex_attributes(d);
+                pgraph_bind_converted_vertex_attributes(d, false,
+                                                        max_element + 1);
 
 #ifdef DEBUG_NV2A_GPU_EXPORT
                 GLint prog;
                 glGetIntegerv(GL_CURRENT_PROGRAM,&prog);
                 char tmp[32];
                 sprintf(tmp,"./buffer-%i.obj",prog);
-                debugger_export_mesh(tmp,0,3,6,max_element+1,kelvin->inline_elements_length,kelvin->inline_elements,kelvin->gl_primitive_mode);
+                debugger_export_mesh(tmp,0,3,6,max_element+1,pg->inline_elements_length,pg->inline_elements,pg->gl_primitive_mode);
                 sprintf(tmp,"./buffer-%i.vsh",prog);
                 debugger_export_vertex_shader(tmp, kelvin, true);
 #endif
 
-                kelvin_bind_converted_vertex_attributes(d, kelvin,
-                    false, max_element+1);
-                glDrawElements(kelvin->gl_primitive_mode,
-                               kelvin->inline_elements_length,
-                               GL_UNSIGNED_INT,
-                               kelvin->inline_elements);
-            }/* else {
-                assert(false);
-            }*/
+                debugger_message("DRAW: Inline Elements");
+                glDrawRangeElements(pg->gl_primitive_mode,
+                                    min_element, max_element,
+                                    pg->inline_elements_length,
+                                    GL_UNSIGNED_INT,
+                                    pg->inline_elements);
+            } else {
+                static unknown_draw = 0;
+                debugger_message("DRAW: Unknown method %d?!",unknown_draw);
+                printf("Unknown draw method %d?!\n",unknown_draw);
+                unknown_draw++;
+            }
 
 
 #ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
@@ -3242,6 +3691,15 @@ printf("%i \t%i: \tCLIP %ix%i [%.3f;%.3f] \tVP: %.3fx%.3fx%.3f\tAA: %i, PL: %s, 
 
             assert(glGetError() == GL_NO_ERROR);
             debugger_pop_group();
+
+
+#if 1 // Dump all draw calls
+            debugger_push_group("Drawdump");
+//            glFinish();
+//            pgraph_update_surfaces(d, false, true, true);
+            debugger_pop_group();
+            debugger_finish_frame();
+#endif
 
         }
         break;
@@ -3266,9 +3724,11 @@ printf("%i \t%i: \tCLIP %ix%i [%.3f;%.3f] \tVP: %.3fx%.3fx%.3f\tAA: %i, PL: %s, 
             GET_MASK(parameter, NV097_SET_TEXTURE_FORMAT_BASE_SIZE_U);
         pg->textures[slot].log_height =
             GET_MASK(parameter, NV097_SET_TEXTURE_FORMAT_BASE_SIZE_V);
+        pg->textures[slot].log_depth =
+            GET_MASK(parameter, NV097_SET_TEXTURE_FORMAT_BASE_SIZE_P);
 
         pg->textures[slot].dirty = true;
-        pg->shaders_dirty = true;
+        pg->dirty.shaders = true; /* FORMAT_COLOR used in combiner */
         break;
     CASE_4(NV097_SET_TEXTURE_ADDRESS, 64):
         slot = (class_method - NV097_SET_TEXTURE_ADDRESS) / 64;
@@ -3299,13 +3759,11 @@ printf("%i \t%i: \tCLIP %ix%i [%.3f;%.3f] \tVP: %.3fx%.3fx%.3f\tAA: %i, PL: %s, 
             GET_MASK(parameter, NV097_SET_TEXTURE_CONTROL0_MIN_LOD_CLAMP);
         pg->textures[slot].max_mipmap_level =
             GET_MASK(parameter, NV097_SET_TEXTURE_CONTROL0_MAX_LOD_CLAMP);
+        pg->textures[slot].alphakill =
+            GET_MASK(parameter, NV097_SET_TEXTURE_CONTROL0_ALPHA_KILL_ENABLE);
 
-        if (GET_MASK(parameter, NV097_SET_TEXTURE_CONTROL0_ALPHA_KILL_ENABLE)) {
-            printf("Alphakill not supported yet\n");
-            assert(0);
-        }
-
-        pg->shaders_dirty = true;
+        pg->textures[slot].dirty = true;
+        pg->dirty.shaders = true; /* ALPHA_KILL_ENABLE used in combiner */
         break;
     CASE_4(NV097_SET_TEXTURE_CONTROL1, 64):
         slot = (class_method - NV097_SET_TEXTURE_CONTROL1) / 64;
@@ -3343,40 +3801,105 @@ printf("%i \t%i: \tCLIP %ix%i [%.3f;%.3f] \tVP: %.3fx%.3fx%.3f\tAA: %i, PL: %s, 
         break;
     }
     case NV097_ARRAY_ELEMENT16:
-        assert(kelvin->inline_elements_length < NV2A_GPU_MAX_BATCH_LENGTH);
-        kelvin->inline_elements[
-            kelvin->inline_elements_length++] = parameter & 0xFFFF;
-        kelvin->inline_elements[
-            kelvin->inline_elements_length++] = parameter >> 16;
+        assert(pg->inline_elements_length < NV2A_GPU_MAX_BATCH_LENGTH);
+        pg->inline_elements[
+            pg->inline_elements_length++] = parameter & 0xFFFF;
+        pg->inline_elements[
+            pg->inline_elements_length++] = parameter >> 16;
         break;
     case NV097_ARRAY_ELEMENT32:
-        assert(kelvin->inline_elements_length < NV2A_GPU_MAX_BATCH_LENGTH);
-        kelvin->inline_elements[
-            kelvin->inline_elements_length++] = parameter;
+        assert(pg->inline_elements_length < NV2A_GPU_MAX_BATCH_LENGTH);
+        pg->inline_elements[
+            pg->inline_elements_length++] = parameter;
         break;
     case NV097_DRAW_ARRAYS: {
+        /* This should only be callable between begin and end */
+
+        pgraph_bind_vertex_attributes(d);
+
         unsigned int start = GET_MASK(parameter, NV097_DRAW_ARRAYS_START_INDEX);
         unsigned int count = GET_MASK(parameter, NV097_DRAW_ARRAYS_COUNT)+1;
-
-
-        kelvin_bind_converted_vertex_attributes(d, kelvin,
-            false, start + count);
-        glDrawArrays(kelvin->gl_primitive_mode, start, count);
-
+        debugger_message("DRAW: Draw Arrays");
+        glDrawArrays(pg->gl_primitive_mode, start, count);
         break;
     }
     case NV097_INLINE_ARRAY:
-        assert(kelvin->inline_array_length < NV2A_GPU_MAX_BATCH_LENGTH);
-        kelvin->inline_array[
-            kelvin->inline_array_length++] = parameter;
+        assert(pg->inline_array_length < NV2A_GPU_MAX_BATCH_LENGTH);
+        pg->inline_array[
+            pg->inline_array_length++] = parameter;
         break;
-
-    case NV097_SET_VERTEX_DATA4UB ...
-            NV097_SET_VERTEX_DATA4UB + 0x3c:
-        slot = (class_method - NV097_SET_VERTEX_DATA4UB) / 4;
-        kelvin->vertex_attributes[slot].inline_value = parameter;
+    CASE_RANGE(NV097_SET_VERTEX_DATA2F_M,16*2) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* data = entry->v[slot / 2];
+        data[slot % 2] = *(float*)&parameter;
+        debugger_message("0x%04x (2F): vert[%d].v%d.%c = %f",method,pg->inline_buffer_length,slot/2,'x'+slot%2,*(float*)&parameter);
+        if ((slot / 2 == 0) && (slot % 2 == 1)) {
+            //FIXME: Complete partial attributes [such as v3,v0,v0,v0 - v3 needs to be copied]
+            //FIXME: Complete z,w or just get them from the previous attrib too?
+      
+            { // Hack to fake z,w completion
+                data[2] = 0.0f;
+                data[3] = 1.0f;
+            }
+            pg->inline_buffer_length++;
+            debugger_message("Selecting next vertex");
+        }
         break;
-
+    }
+    CASE_RANGE(NV097_SET_VERTEX_DATA4F_M,16*4) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* data = entry->v[slot / 4];
+        data[slot % 4] = *(float*)&parameter;
+        if ((slot / 4 == 0) && (slot % 4 == 3)) {
+            //FIXME: see NV097_SET_VERTEX_DATA2F_M
+            pg->inline_buffer_length++;
+        }
+        assert(0); // Untested!
+//FIXME: Used in public XDK API
+        break;
+    }
+    CASE_RANGE(NV097_SET_VERTEX_DATA4UB,16) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* data = entry->v[slot];
+        data[0] = ((parameter >> 24) & 0xFF) / 255.0f; //FIXME: Ordering might be wrong! RGBA BGRA RGB BGR #findme
+        data[1] = ((parameter >> 16) & 0xFF) / 255.0f;
+        data[2] = ((parameter >> 8) & 0xFF) / 255.0f;
+        data[3] = (parameter & 0xFF) / 255.0f;
+        if (slot == 0) {
+            //FIXME: see NV097_SET_VERTEX_DATA2F_M
+            pg->inline_buffer_length++;
+        }
+//FIXME: Make sure this works!
+        break;
+    }
+    CASE_RANGE(NV097_SET_VERTEX_DATA2S,16) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* data = entry->v[slot];
+        data[0] = ((int16_t*)&parameter)[0] / 32767.5f; //FIXME: Is this okay? We should probably map to inclusive [-1.0 to +1.0]
+        data[1] = ((int16_t*)&parameter)[1] / 32767.5f;
+        if (slot == 0) {
+            //FIXME: see NV097_SET_VERTEX_DATA2F_M
+            pg->inline_buffer_length++;
+        }
+        break;
+    }
+    CASE_RANGE(NV097_SET_VERTEX_DATA4S_M,16*2) {
+        InlineVertexBufferEntry *entry =
+            &pg->inline_buffer[pg->inline_buffer_length];
+        float* data = entry->v[slot / 2];
+        data[slot % 2 + 0] = ((int16_t*)&parameter)[0] / 32767.5f; //FIXME: Sync with NV097_SET_VERTEX_DATA2S once that is corret
+        data[slot % 2 + 1] = ((int16_t*)&parameter)[1] / 32767.5f;
+        if ((slot / 2 == 0) && (slot % 2 == 1)) {
+            //FIXME: see NV097_SET_VERTEX_DATA2F_M
+            pg->inline_buffer_length++;
+        }
+        assert(0); // Untested!
+        break;
+    }
     case NV097_SET_SEMAPHORE_OFFSET:
         kelvin->semaphore_offset = parameter;
         break;
@@ -3413,9 +3936,13 @@ printf("%i \t%i: \tCLIP %ix%i [%.3f;%.3f] \tVP: %.3fx%.3fx%.3f\tAA: %i, PL: %s, 
         NV2A_GPU_DPRINTF("------------------CLEAR 0x%x---------------\n", parameter);
         //glClearColor(1, 0, 0, 1);
 
+        bool writeDepth = parameter & NV097_CLEAR_SURFACE_Z;
+        bool writeStencil = parameter & NV097_CLEAR_SURFACE_STENCIL;
+        bool writeZeta = writeDepth || writeStencil;
+        bool writeColor = parameter & NV097_CLEAR_SURFACE_COLOR;
+
         /* Early out if we have nothing to clear */
-        if (!(parameter &
-            (NV097_CLEAR_SURFACE_COLOR | NV097_CLEAR_SURFACE_ZETA))) {
+        if (!(writeZeta || writeColor)) {
             break;
         }
 
@@ -3423,10 +3950,9 @@ printf("%i \t%i: \tCLIP %ix%i [%.3f;%.3f] \tVP: %.3fx%.3fx%.3f\tAA: %i, PL: %s, 
 
         GLbitfield gl_mask = 0;
 
-        pgraph_update_surfaces(d, true, parameter & NV097_CLEAR_SURFACE_ZETA,
-                                        parameter & NV097_CLEAR_SURFACE_COLOR);
+        pgraph_update_surfaces(d, true, writeZeta, writeColor);
 
-        if (parameter & NV097_CLEAR_SURFACE_ZETA) {
+        if (writeZeta) {
 
             uint32_t clear_zstencil = d->pgraph.regs[NV_PGRAPH_ZSTENCILCLEARVALUE];
             GLint gl_clear_stencil;
@@ -3444,23 +3970,23 @@ printf("%i \t%i: \tCLIP %ix%i [%.3f;%.3f] \tVP: %.3fx%.3fx%.3f\tAA: %i, PL: %s, 
                     assert(0);
             }
 
-            if (parameter & NV097_CLEAR_SURFACE_Z) {
+            if (writeDepth) {
                 gl_mask |= GL_DEPTH_BUFFER_BIT;
                 glDepthMask(GL_TRUE);
-                pg->depth_mask_dirty = true;
+                pg->dirty.depth_mask = true;
                 glClearDepth(gl_clear_depth);
             }
-            if (parameter & NV097_CLEAR_SURFACE_STENCIL) {
+            if (writeStencil) {
                 gl_mask |= GL_STENCIL_BUFFER_BIT;
                 glStencilMask(0xFF); /* We have 8 bits maximum anyway */
-                pg->stencil_mask_dirty = true;
+                pg->dirty.stencil_mask = true;
                 glClearStencil(gl_clear_stencil);
             }
 
             pg->surface_zeta.draw_dirty = true;
         }
 
-        if (parameter & NV097_CLEAR_SURFACE_COLOR) {
+        if (writeColor) {
 
             gl_mask |= GL_COLOR_BUFFER_BIT;
 
@@ -3470,7 +3996,7 @@ printf("%i \t%i: \tCLIP %ix%i [%.3f;%.3f] \tVP: %.3fx%.3fx%.3f\tAA: %i, PL: %s, 
                         (parameter & NV097_CLEAR_SURFACE_G)?GL_TRUE:GL_FALSE,
                         (parameter & NV097_CLEAR_SURFACE_B)?GL_TRUE:GL_FALSE,
                         (parameter & NV097_CLEAR_SURFACE_A)?GL_TRUE:GL_FALSE);
-            pg->color_mask_dirty = true;
+            pg->dirty.color_mask = true;
 
             glClearColor( ((clear_color >> 16) & 0xFF) / 255.0f, /* red */
                           ((clear_color >> 8) & 0xFF) / 255.0f,  /* green */
@@ -3483,13 +4009,13 @@ printf("%i \t%i: \tCLIP %ix%i [%.3f;%.3f] \tVP: %.3fx%.3fx%.3f\tAA: %i, PL: %s, 
         glEnable(GL_SCISSOR_TEST);
 
         unsigned int xmin = GET_MASK(d->pgraph.regs[NV_PGRAPH_CLEARRECTX],
-                NV_PGRAPH_CLEARRECTX_XMIN);
+                NV_PGRAPH_CLEARRECTX_XMIN)*2; //FIXME: AA
         unsigned int xmax = GET_MASK(d->pgraph.regs[NV_PGRAPH_CLEARRECTX],
-                NV_PGRAPH_CLEARRECTX_XMAX);
+                NV_PGRAPH_CLEARRECTX_XMAX)*2; //FIXME: AA
         unsigned int ymin = GET_MASK(d->pgraph.regs[NV_PGRAPH_CLEARRECTY],
-                NV_PGRAPH_CLEARRECTY_YMIN);
+                NV_PGRAPH_CLEARRECTY_YMIN)*2; //FIXME: AA
         unsigned int ymax = GET_MASK(d->pgraph.regs[NV_PGRAPH_CLEARRECTY],
-                NV_PGRAPH_CLEARRECTY_YMAX);
+                NV_PGRAPH_CLEARRECTY_YMAX)*2; //FIXME: AA
         glScissor(xmin, ymin, xmax-xmin + 1, ymax-ymin + 1);
         //FIXME: Is this being clipped? If not we need a special case of update_surface
 
@@ -3515,40 +4041,83 @@ printf("%i \t%i: \tCLIP %ix%i [%.3f;%.3f] \tVP: %.3fx%.3fx%.3f\tAA: %i, PL: %s, 
             NV097_SET_SPECULAR_FOG_FACTOR + 4:
         slot = (class_method - NV097_SET_SPECULAR_FOG_FACTOR) / 4;
         pg->regs[NV_PGRAPH_SPECFOGFACTOR0 + slot*4] = parameter;
-        pg->shaders_dirty = true;
+        pg->dirty.shaders = true;
+        break;
+
+    CASE_RANGE(NV097_SET_EYE_VECTOR, 3) {
+        pg->eye_vector[slot] = *(float*)&parameter;
+        pg->dirty.eye_vector = true;
+        break;
+    }
+    case NV097_SET_FOG_MODE: {
+        uint32_t reg;
+        switch(parameter) {
+        case NV097_SET_FOG_MODE_LINEAR:
+            reg = NV_PGRAPH_CONTROL_3_FOG_MODE_LINEAR;
+            break;
+        case NV097_SET_FOG_MODE_EXP:
+            reg = NV_PGRAPH_CONTROL_3_FOG_MODE_EXP;
+            break;
+        case NV097_SET_FOG_MODE_EXP2:
+            reg = NV_PGRAPH_CONTROL_3_FOG_MODE_EXP2;
+            break;
+        case NV097_SET_FOG_MODE_EXP_ABS:
+            reg = NV_PGRAPH_CONTROL_3_FOG_MODE_EXP_ABS;
+            break;
+        case NV097_SET_FOG_MODE_EXP2_ABS:
+            reg = NV_PGRAPH_CONTROL_3_FOG_MODE_EXP2_ABS;
+            break;
+        case NV097_SET_FOG_MODE_LINEAR_ABS:
+            reg = NV_PGRAPH_CONTROL_3_FOG_MODE_LINEAR_ABS;
+            break;
+        default:
+            assert(0);
+        }
+        SET_PG_REG(pg, CONTROL_3, FOG_MODE, reg);
+        pg->dirty.fog_mode = true;
+        break;
+    }
+    case NV097_SET_FOG_ENABLE:
+        SET_PG_REG(pg, CONTROL_3, FOGENABLE, parameter);
+        pg->dirty.fog = true;
         break;
 
     case NV097_SET_FOG_COLOR:
-        pg->fog_color = parameter;
-        GLfloat gl_fog[] = {
-            (pg->fog_color & 0xFF) / 255.0f,
-            ((pg->fog_color >> 8) & 0xFF) / 255.0f,
-            ((pg->fog_color >> 16) & 0xFF) / 255.0f,
-            ((pg->fog_color >> 24) & 0xFF) / 255.0f
-        };
-        glFogfv(GL_FOG_COLOR,gl_fog);
+        SET_PG_REG(pg, FOGCOLOR, RED,
+                   GET_MASK(parameter, NV097_SET_FOG_COLOR_RED));
+        SET_PG_REG(pg, FOGCOLOR, GREEN,
+                   GET_MASK(parameter, NV097_SET_FOG_COLOR_GREEN));
+        SET_PG_REG(pg, FOGCOLOR, BLUE,
+                   GET_MASK(parameter, NV097_SET_FOG_COLOR_BLUE));
+        SET_PG_REG(pg, FOGCOLOR, ALPHA,
+                   GET_MASK(parameter, NV097_SET_FOG_COLOR_ALPHA));
+        pg->dirty.fog_color = true;
+        break;
+
+    case NV097_SET_SHADER_CLIP_PLANE_MODE:
+        pg->regs[NV_PGRAPH_SHADERCLIPMODE] = parameter;
         break;
 
     case NV097_SET_COMBINER_COLOR_OCW ...
             NV097_SET_COMBINER_COLOR_OCW + 28:
         slot = (class_method - NV097_SET_COMBINER_COLOR_OCW) / 4;
         pg->regs[NV_PGRAPH_COMBINECOLORO0 + slot*4] = parameter;
-        pg->shaders_dirty = true;
+        pg->dirty.shaders = true;
         break;
 
     case NV097_SET_COMBINER_CONTROL:
         pg->regs[NV_PGRAPH_COMBINECTL] = parameter;
-        pg->shaders_dirty = true;
+        pg->dirty.shaders = true;
         break;
 
     case NV097_SET_SHADER_STAGE_PROGRAM:
         pg->regs[NV_PGRAPH_SHADERPROG] = parameter;
-        pg->shaders_dirty = true;
+        pg->dirty.shaders = true;
         break;
 
     case NV097_SET_SHADER_OTHER_STAGE_INPUT:
         pg->regs[NV_PGRAPH_SHADERCTL] = parameter;
-        pg->shaders_dirty = true;
+        pg->dirty.shaders = true;
         break;
 
     case NV097_SET_TRANSFORM_EXECUTION_MODE:
@@ -3558,27 +4127,24 @@ printf("%i \t%i: \tCLIP %ix%i [%.3f;%.3f] \tVP: %.3fx%.3fx%.3f\tAA: %i, PL: %s, 
                  GET_MASK(parameter, NV097_SET_TRANSFORM_EXECUTION_MODE_RANGE_MODE));
         break;
     case NV097_SET_TRANSFORM_PROGRAM_CXT_WRITE_EN:
-        kelvin->enable_vertex_program_write = parameter;
+        pg->enable_vertex_program_write = parameter;
         break;
     case NV097_SET_TRANSFORM_PROGRAM_LOAD:
+        /* Parameter is [0,136], but we use the load_slot to address words in
+           the instruction so we have to multiply it by 4 */
         assert(parameter < NV2A_GPU_MAX_VERTEXSHADER_LENGTH); //FIXME: Is this any useful? This just sets a register, it might be filled with crap unless it's actually used
-        //printf("Seeking to prog slot %i\n",parameter);
-        assert(parameter == 0); /* FIXME: Something is fishy.. this *always* seeks to 0!? */
-        kelvin->vertexshader_load_slot = parameter;
+        pg->vertexshader_load_slot = parameter * 4;
         break;
     case NV097_SET_TRANSFORM_PROGRAM_START:
         assert(parameter < NV2A_GPU_MAX_VERTEXSHADER_LENGTH);
-        //printf("Setting start to slot %i\n",parameter);
-        assert(parameter == 0); /* FIXME: Something is fishy.. this *always* seeks to 0!? */
-        kelvin->vertexshader_start_slot = parameter;
-        kelvin->vertexshader.dirty = true;
+        pg->vertexshader_start_slot = parameter;
+        pg->vertexshader.dirty = true;
         break;
     case NV097_SET_TRANSFORM_CONSTANT_LOAD:
         /* Parameter is [0,192], but we use the load_slot to address components
            so we have to multiply it by 4 */
         assert(parameter < NV2A_GPU_VERTEXSHADER_CONSTANTS);
-        //printf("Seeking to const slot %i [%i]\n",parameter,parameter-96);
-        kelvin->constant_load_slot = parameter*4;
+        pg->constant_load_slot = parameter*4;
         NV2A_GPU_DPRINTF("load to %d\n", parameter);
         break;
 
@@ -3598,57 +4164,84 @@ printf("%i \t%i: \tCLIP %ix%i [%.3f;%.3f] \tVP: %.3fx%.3fx%.3f\tAA: %i, PL: %s, 
 
 #if 1
     case NV097_SET_ALPHA_TEST_ENABLE:
-        set_gl_state(GL_ALPHA_TEST,kelvin->alpha_test_enable = parameter);
+        SET_PG_REG(pg, CONTROL_0, ALPHATESTENABLE, parameter);
+        pg->dirty.alpha_test = true;
         break;
     case NV097_SET_BLEND_ENABLE:
         set_gl_state(GL_BLEND,kelvin->blend_enable = parameter);
+        pg->dirty.blend = true;
         break;
-    case NV097_SET_CULL_FACE:
-        set_gl_cull_face(kelvin->cull_face = parameter);
+    case NV097_SET_BLEND_FUNC_SFACTOR:
+        set_gl_blend_func(kelvin->blend_func_sfactor = parameter,
+                          kelvin->blend_func_dfactor);
+        pg->dirty.blend_func = true;
+        break;
+    case NV097_SET_BLEND_FUNC_DFACTOR:
+        set_gl_blend_func(kelvin->blend_func_sfactor,
+                          kelvin->blend_func_dfactor = parameter);
+        pg->dirty.blend_func = true;
         break;
     case NV097_SET_FRONT_FACE:
         set_gl_front_face(kelvin->front_face = parameter);
+        pg->dirty.front_face = true;
         break;
     case NV097_SET_CULL_FACE_ENABLE:
         set_gl_state(GL_CULL_FACE,kelvin->cull_face_enable = parameter);
+        pg->dirty.cull_face = true;
+        break;
+    case NV097_SET_CULL_FACE:
+        set_gl_cull_face(kelvin->cull_face = parameter);
+        pg->dirty.cull_face_mode = true;
         break;
 #endif
 #if 1
 //FIXME: 2D seems to be gone because of stupid fixed function emu zbuffer calculation
     case NV097_SET_DEPTH_TEST_ENABLE:
-        set_gl_state(GL_DEPTH_TEST,kelvin->depth_test_enable = parameter);
+        SET_PG_REG(pg, CONTROL_0, ZENABLE, parameter);
+        pg->dirty.depth_test = true;
         break;
     case NV097_SET_DEPTH_FUNC:
-        glDepthFunc(map_method_to_gl_func(kelvin->depth_func = parameter));
+        SET_PG_REG(pg, CONTROL_0, ZFUNC,
+                   map_method_to_register_func(parameter));
+        pg->dirty.depth_test_func = true;
         break;
 #endif
 #if 1
     case NV097_SET_ALPHA_FUNC:
-        glAlphaFunc(map_method_to_gl_func(kelvin->alpha_func = parameter),
-                    kelvin->alpha_ref);
+        SET_PG_REG(pg, CONTROL_0, ALPHAFUNC,
+                   map_method_to_register_func(parameter));
+        pg->dirty.alpha_test_func = true;
         break;
     case NV097_SET_ALPHA_REF:
-        glAlphaFunc(map_method_to_gl_func(kelvin->alpha_func),
-                    kelvin->alpha_ref = *(float*)&parameter);
-        break;
-    case NV097_SET_BLEND_FUNC_SFACTOR:
-        set_gl_blend_func(kelvin->blend_func_sfactor = parameter,
-                          kelvin->blend_func_dfactor);
-        break;
-    case NV097_SET_BLEND_FUNC_DFACTOR:
-        set_gl_blend_func(kelvin->blend_func_sfactor,
-                          kelvin->blend_func_dfactor = parameter);
+        SET_PG_REG(pg, CONTROL_0, ALPHAREF, parameter); //FIXME: is this parameter a float?
+        pg->dirty.alpha_test_func = true;
         break;
     case NV097_SET_EDGE_FLAG:
         glEdgeFlag((kelvin->edge_flag = parameter)?GL_TRUE:GL_FALSE);
+        pg->dirty.edge_flag = true;
         break;
 #endif
     default:
-        NV2A_GPU_DPRINTF("    unhandled  (0x%02x 0x%08x)\n",
-                     object->graphics_class, method);
-        debugger_message("NV2A: unhandled method 0x%04x: 0x%04x",
-                    object->graphics_class, 
-                    method);
+        NV2A_GPU_DPRINTF("    unhandled  (0x%04x 0x%04x: 0x%08x)\n",
+                     object->graphics_class, method, parameter);
+        const char* method_name = "";
+        uint32_t nmethod = 0;
+        switch (object->graphics_class) {
+            case NV_KELVIN_PRIMITIVE:
+                nmethod = method | (0x5c << 16);
+                break;
+            case NV_CONTEXT_SURFACES_2D:
+                nmethod = method | (0x6d << 16);
+                break;
+            default:
+                break;
+        }
+        if (nmethod != 0
+            && nmethod < sizeof(nv2a_gpu_method_names)/sizeof(const char*)) {
+            method_name = nv2a_gpu_method_names[nmethod];
+        }
+        debugger_message("NV2A: unhandled method 0x%04x 0x%04x: 0x%08x (%s)",
+                    object->graphics_class, method, parameter, method_name);
         break;
     }
     qemu_mutex_unlock(&d->pgraph.lock);
@@ -5179,9 +5772,6 @@ static const struct NV2A_GPUBlockInfo blocktable[] = {
     },
 };
 
-static const char* nv2a_gpu_reg_names[] = {};
-static const char* nv2a_gpu_method_names[] = {};
-
 static void reg_log_read(int block, hwaddr addr, uint64_t val) {
     if (blocktable[block].name) {
         hwaddr naddr = blocktable[block].offset + addr;
@@ -5248,7 +5838,7 @@ static void pgraph_method_log(unsigned int subchannel,
             NV2A_GPU_DPRINTF("pgraph method (%d): 0x%x -> 0x%04x (0x%x)\n",
                      subchannel, graphics_class, method, parameter);
         }
-
+        //debugger_message("pgraph method (Class 0x%x): 0x%04x 0x%04x: 0x%x",graphics_class,subchannel,graphics_class,method,parameter);
     }
     if (method == last) { count++; }
     else {count = 0; }

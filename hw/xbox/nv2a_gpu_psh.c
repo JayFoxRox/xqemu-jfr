@@ -73,14 +73,14 @@ enum PS_TEXTUREMODES
 
 enum PS_INPUTMAPPING
 {
-    PS_INPUTMAPPING_UNSIGNED_IDENTITY= 0x00L, // max(0,x)         OK for final combiner
-    PS_INPUTMAPPING_UNSIGNED_INVERT=   0x20L, // 1 - max(0,x)     OK for final combiner
-    PS_INPUTMAPPING_EXPAND_NORMAL=     0x40L, // 2*max(0,x) - 1   invalid for final combiner
-    PS_INPUTMAPPING_EXPAND_NEGATE=     0x60L, // 1 - 2*max(0,x)   invalid for final combiner
-    PS_INPUTMAPPING_HALFBIAS_NORMAL=   0x80L, // max(0,x) - 1/2   invalid for final combiner
-    PS_INPUTMAPPING_HALFBIAS_NEGATE=   0xa0L, // 1/2 - max(0,x)   invalid for final combiner
-    PS_INPUTMAPPING_SIGNED_IDENTITY=   0xc0L, // x                invalid for final combiner
-    PS_INPUTMAPPING_SIGNED_NEGATE=     0xe0L, // -x               invalid for final combiner
+    PS_INPUTMAPPING_UNSIGNED_IDENTITY= 0x00L, // max(0,x)            OK for final combiner //FIXME: also documented as abs(x)
+    PS_INPUTMAPPING_UNSIGNED_INVERT=   0x20L, // 1 - min(max(0,x),1) OK for final combiner //FIXME: also documented as 1-x
+    PS_INPUTMAPPING_EXPAND_NORMAL=     0x40L, // 2*max(0,x) - 1      invalid for final combiner
+    PS_INPUTMAPPING_EXPAND_NEGATE=     0x60L, // 1 - 2*max(0,x)      invalid for final combiner
+    PS_INPUTMAPPING_HALFBIAS_NORMAL=   0x80L, // max(0,x) - 1/2      invalid for final combiner
+    PS_INPUTMAPPING_HALFBIAS_NEGATE=   0xa0L, // 1/2 - max(0,x)      invalid for final combiner
+    PS_INPUTMAPPING_SIGNED_IDENTITY=   0xc0L, // x                   invalid for final combiner
+    PS_INPUTMAPPING_SIGNED_NEGATE=     0xe0L, // -x                  invalid for final combiner
 };
 
 enum PS_REGISTER
@@ -153,9 +153,7 @@ enum PS_CHANNEL
 enum PS_FINALCOMBINERSETTING
 {
     PS_FINALCOMBINERSETTING_CLAMP_SUM=     0x80, // V1+R0 sum clamped to [0,1]
-
     PS_FINALCOMBINERSETTING_COMPLEMENT_V1= 0x40, // unsigned invert mapping
-
     PS_FINALCOMBINERSETTING_COMPLEMENT_R0= 0x20, // unsigned invert mapping
 };
 
@@ -179,6 +177,72 @@ static inline QString* pretty_operation(QString* x, const char* zero, const char
     return qstring_from_fmt(any, str_x);
 }
 
+static inline QString* pretty_multiply(QString* a, QString* b)
+{
+    const char* str_a = qstring_get_str(a);
+    const char* str_b = qstring_get_str(b);
+    if (!strcmp(str_a, str_zero) || /* "0.0 * b = 0.0" */
+        !strcmp(str_b, str_zero)) { /* "a * 0.0 = 0.0" */
+        return qstring_from_str(str_zero);
+    } else if (!strcmp(str_a, str_one)) { /* "1.0 * b" = b */
+        QINCREF(b);
+        return b;
+    } else if (!strcmp(str_b, str_one)) { /* "a * 1.0" = a */
+        QINCREF(a);
+        return a;
+    } else {
+        return qstring_from_fmt("%s * %s", str_a, str_b);
+    }
+}
+
+static inline QString* pretty_invert(QString* x, bool unsign, bool brackets)
+{
+    const char* fmt;
+    if (unsign) {
+        if (brackets) {
+            fmt = "(1.0 - min(u(%s), 1.0))";
+        } else {
+            fmt = "1.0 - min(u(%s), 1.0)";
+        }
+    } else {
+        if (brackets) {
+            fmt = "(1.0 - %s)";
+        } else {
+            fmt = "1.0 - %s";
+        }
+    }
+    return pretty_operation(x,
+                            str_one,  /* "1.0 - 0.0" = 1.0 */
+                            str_half, /* "1.0 - 0.5" = 0.5 */
+                            str_zero, /* "1.0 - 1.0" = 0.0 */
+                            fmt);
+}
+
+static inline QString* pretty_add(QString* a, QString* b, bool brackets)
+{
+    QString* value;
+    if (!strcmp(qstring_get_str(a), str_half) && /* "0.5 + 0.5" = 1.0 */
+        !strcmp(qstring_get_str(b), str_half)) {
+        return qstring_from_str(str_one);
+    } else if (!strcmp(qstring_get_str(a), str_zero)) { /* "0.0 + b" = b */
+        QINCREF(b);
+        value = b;
+    } else if (!strcmp(qstring_get_str(b), str_zero)) { /* "a + 0.0" = a */
+        QINCREF(a);
+        value = a;
+    } else {
+        value = qstring_from_fmt("%s + %s", qstring_get_str(a),
+                                            qstring_get_str(b));
+    }
+    QString* res;
+    if (brackets) {
+        res = qstring_from_fmt("(%s)", qstring_get_str(value));
+        QDECREF(value);
+        return res;
+    } else {
+        return value;
+    }
+}
 
 // Structures to describe the PS definition
 
@@ -218,9 +282,11 @@ struct PixelShader {
     struct FCInputInfo final_input;
     int tex_modes[4], input_tex[4];
 
-    //uint32_t compare_mode, dot_mapping, input_texture;
+    //FIXME: dot_mapping
 
     bool rect_tex[4];
+    bool compare_mode[4][4];
+    bool alphakill[4];
 
     QString *varE, *varF;
     QString *code;
@@ -373,45 +439,41 @@ static QString* get_input_var(struct PixelShader *ps, struct InputInfo in, bool 
     switch (in.mod) {
     case PS_INPUTMAPPING_UNSIGNED_IDENTITY:
         res = pretty_operation(reg,
-                               str_zero, /* "0.0" = 0.0 */
-                               str_half, /* "0.5" = 0.5 */
-                               str_one,  /* "1.0" = 1.0 */
-                               "max(%s, 0.0)");
+                               str_zero, /* 0.0 = 0.0 */
+                               str_half, /* 0.5 = 0.5 */
+                               str_one,  /* 1.0 = 1.0 */
+                               "u(%s)");
         break;
     case PS_INPUTMAPPING_UNSIGNED_INVERT:
-        res = pretty_operation(reg,
-                               str_one,  /* "1.0 - 0.0" = 1.0 */
-                               str_half, /* "1.0 - 0.5" = 0.5 */
-                               str_zero, /* "1.0 - 1.0" = 0.0 */
-                               "(1.0 - max(%s, 0.0))");
+        res = pretty_invert(reg, true, true);
         break;
     case PS_INPUTMAPPING_EXPAND_NORMAL:
         res = pretty_operation(reg,
                                NULL,     /* "2.0 * 0.0 - 1.0" = -1.0 */
                                str_zero, /* "2.0 * 0.5 - 1.0" = 0.0 */
                                str_one,  /* "2.0 * 1.0 - 1.0" = 1.0 */
-                               "(2.0 * max(%s, 0.0) - 1.0)");
+                               "(2.0 * u(%s) - 1.0)");
         break;
     case PS_INPUTMAPPING_EXPAND_NEGATE:
         res = pretty_operation(reg,
                                str_one,  /* "1.0 - 2.0 * 0.0" = 1.0 */
                                str_zero, /* "1.0 - 2.0 * 0.5" = 0.0 */
                                NULL,     /* "1.0 - 2.0 * 1.0" = -1.0 */
-                               "(1.0 - 2.0 * max(%s, 0.0)");
+                               "(1.0 - 2.0 * u(%s))");
         break;
     case PS_INPUTMAPPING_HALFBIAS_NORMAL:
         res = pretty_operation(reg,
                                NULL,     /* "0.0 - 0.5" = -0.5 */
                                str_zero, /* "0.5 - 0.5" = 0.0 */
                                str_half, /* "1.0 - 0.5" = 0.5 */
-                               "(max(%s, 0.0) - 0.5)");
+                               "(u(%s) - 0.5)");
         break;
     case PS_INPUTMAPPING_HALFBIAS_NEGATE:
         res = pretty_operation(reg,
                                str_half, /* "0.5 - 0.0" = 0.5 */
                                str_zero, /* "0.5 - 0.5" = 0.0 */
                                NULL,     /* "0.5 - 1.0" = -0.5 */
-                               "(0.5 - max(%s, 0.0))");
+                               "(0.5 - u(%s))");
         break;
     case PS_INPUTMAPPING_SIGNED_IDENTITY:
         QINCREF(reg);
@@ -450,28 +512,28 @@ static QString* get_output(QString *reg, int mapping)
                                str_zero, /* "0.0 * 2.0" = 0.0 */
                                str_one,  /* "0.5 * 2.0" = 1.0 */
                                NULL,     /* "1.0 * 2.0" = 2.0 */
-                               "(%s * 2.0)");
+                               "%s * 2.0");
         break;
     case PS_COMBINEROUTPUT_SHIFTLEFT_1_BIAS:
         res = pretty_operation(reg,
                                NULL,     /* "(0.0 - 0.5) * 2.0" = -1.0 */
                                str_zero, /* "(0.5 - 0.5) * 2.0" = 0.0 */
                                str_one,  /* "(1.0 - 0.5) * 2.0" = 1.0 */
-                               "((%s - 0.5) * 2.0)");
+                               "(%s - 0.5) * 2.0");
         break;
     case PS_COMBINEROUTPUT_SHIFTLEFT_2:
         res = pretty_operation(reg,
                                str_zero, /* "0.0 * 4.0" = 0.0 */
                                NULL,     /* "0.5 * 4.0" = 2.0 */
                                NULL,     /* "1.0 * 4.0" = 4.0 */
-                               "(%s * 4.0)");
+                               "%s * 4.0");
         break;
     case PS_COMBINEROUTPUT_SHIFTRIGHT_1:
         res = pretty_operation(reg,
                                str_zero, /* "0.0 / 2.0" = 0.0 */
                                NULL, /* "0.5 / 2.0" = 0.25 */
                                str_half, /* "1.0 / 2.0" = 0.5 */
-                               "(%s / 2.0)");
+                               "%s / 2.0");
         break;
     default:
         assert(false);
@@ -500,19 +562,7 @@ static void add_stage_code(struct PixelShader *ps,
         ab = qstring_from_fmt("dot(%s, %s)",
                               qstring_get_str(a), qstring_get_str(b));
     } else {
-        if (!strcmp(qstring_get_str(a), str_zero) || /* "0.0 * b = 0.0" */
-            !strcmp(qstring_get_str(b), str_zero)) { /* "a * 0.0 = 0.0" */
-            ab = qstring_from_str(str_zero);
-        } else if (!strcmp(qstring_get_str(a), str_one)) { /* "1.0 * b" = b */
-            QINCREF(b);
-            ab = b;
-        } else if (!strcmp(qstring_get_str(b), str_one)) { /* "a * 1.0" = a */
-            QINCREF(a);
-            ab = a;
-        } else {
-            ab = qstring_from_fmt("(%s * %s)",
-                                  qstring_get_str(a), qstring_get_str(b));
-        }
+        ab = pretty_multiply(a, b);
     }
 
     QString *cd;
@@ -520,19 +570,7 @@ static void add_stage_code(struct PixelShader *ps,
         cd = qstring_from_fmt("dot(%s, %s)",
                               qstring_get_str(c), qstring_get_str(d));
     } else {
-        if (!strcmp(qstring_get_str(c), str_zero) || /* "0.0 * d = 0.0" */
-            !strcmp(qstring_get_str(d), str_zero)) { /* "c * 0.0 = 0.0" */
-            cd = qstring_from_str(str_zero);
-        } else if (!strcmp(qstring_get_str(c), str_one)) { /* "1.0 * d" = d */
-            QINCREF(d);
-            cd = d;
-        } else if (!strcmp(qstring_get_str(d), str_one)) { /* "c * 1.0" = c */
-            QINCREF(c);
-            cd = c;
-        } else {
-            cd = qstring_from_fmt("(%s * %s)",
-                                  qstring_get_str(c), qstring_get_str(d));
-        }
+        cd = pretty_multiply(c, d);
     }
 
     QString *ab_mapping = get_output(ab, output.mapping);
@@ -542,7 +580,7 @@ static void add_stage_code(struct PixelShader *ps,
     QString *sum_dest = get_var(ps, output.muxsum, true);
 
     if (qstring_get_length(ab_dest)) {
-        qstring_append_fmt(ps->code, "  %s.%s = %s(%s);\n",
+        qstring_append_fmt(ps->code, "  %s.%s = %s(c(%s));\n",
                            qstring_get_str(ab_dest), write_mask, caster, qstring_get_str(ab_mapping));
     } else {
         QINCREF(ab_mapping);
@@ -550,7 +588,7 @@ static void add_stage_code(struct PixelShader *ps,
     }
 
     if (qstring_get_length(cd_dest)) {
-        qstring_append_fmt(ps->code, "  %s.%s = %s(%s);\n",
+        qstring_append_fmt(ps->code, "  %s.%s = %s(c(%s));\n",
                            qstring_get_str(cd_dest), write_mask, caster, qstring_get_str(cd_mapping));
     } else {
         QINCREF(cd_mapping);
@@ -558,37 +596,25 @@ static void add_stage_code(struct PixelShader *ps,
     }
 
     if (!is_alpha && output.flags & PS_COMBINEROUTPUT_AB_BLUE_TO_ALPHA) {
-        qstring_append_fmt(ps->code, "  %s.a = %s.b;\n",
+        qstring_append_fmt(ps->code, "  %s.a = c(%s.b);\n",
                            qstring_get_str(ab_dest), qstring_get_str(ab_dest));
     }
     if (!is_alpha && output.flags & PS_COMBINEROUTPUT_CD_BLUE_TO_ALPHA) {
-        qstring_append_fmt(ps->code, "  %s.a = %s.b;\n",
+        qstring_append_fmt(ps->code, "  %s.a = c(%s.b);\n",
                            qstring_get_str(cd_dest), qstring_get_str(cd_dest));
     }
 
     QString *sum;
     if (output.muxsum_op == PS_COMBINEROUTPUT_AB_CD_SUM) {
-        if (!strcmp(qstring_get_str(ab), str_half) && /* "0.5 + 0.5" = 1.0 */
-            !strcmp(qstring_get_str(cd), str_half)) {
-            sum = qstring_from_str(str_one);
-        } else if (!strcmp(qstring_get_str(ab), str_zero)) { /* "0.0 + cd" = cd */
-            QINCREF(cd);
-            sum = cd;
-        } else if (!strcmp(qstring_get_str(cd), str_zero)) { /* "ab + 0.0" = ab */
-            QINCREF(ab);
-            sum = ab;
-        } else {
-            sum = qstring_from_fmt("(%s + %s)", qstring_get_str(ab),
-                                                qstring_get_str(cd));
-        }
+        sum = pretty_add(ab, cd, false);
     } else {
-        sum = qstring_from_fmt("((r0.a >= 0.5) ? %s : %s)",
+        sum = qstring_from_fmt("(r0.a >= 0.5) ? %s : %s",
                                qstring_get_str(cd), qstring_get_str(ab));
     }
 
     QString *sum_mapping = get_output(sum, output.mapping);
     if (qstring_get_length(sum_dest)) {
-        qstring_append_fmt(ps->code, "  %s.%s = %s(%s);\n",
+        qstring_append_fmt(ps->code, "  %s.%s = %s(c(%s));\n",
                            qstring_get_str(sum_dest), write_mask, caster, qstring_get_str(sum_mapping));
     }
 
@@ -628,12 +654,12 @@ static void add_final_stage_code(struct PixelShader *ps, struct FCInputInfo fina
        "a * b + (1.0 - a) * c    " = abac
        "a * b + (1.0 - a) * c + d" = abacd */
 
-    QString* ab = qstring_from_fmt("%s * %s", qstring_get_str(a), qstring_get_str(b)); //FIXME: pretty_multiply()
-    QString* ia = qstring_from_fmt("(1.0 - %s)", qstring_get_str(a)); //FIXME: pretty_invert(, unsign = false, brackets = true)
-    QString* ac = qstring_from_fmt("%s * %s",qstring_get_str(ia), qstring_get_str(c)); //FIXME: pretty_multiply() or something?
-    QString* abac = qstring_from_fmt("(%s + %s)", qstring_get_str(ab), qstring_get_str(ac)); //FIXME: pretty_add(...,brackets = true)
-    QString* abacd = qstring_from_fmt("%s + %s", qstring_get_str(abac), qstring_get_str(d)); //FIXME: pretty_add(...,brackets = false)
-    qstring_append_fmt(ps->code, "  r0.rgb = vec3(%s);\n", qstring_get_str(abacd));
+    QString* ab = pretty_multiply(a, b);
+    QString* ia = pretty_invert(a, false, true);
+    QString* ac = pretty_multiply(ia, c);
+    QString* abac = pretty_add(ab, ac, false);
+    QString* abacd = pretty_add(abac, d, false);
+    qstring_append_fmt(ps->code, "  r0.rgb = min(vec3(%s), 1.0);\n", qstring_get_str(abacd));
     qstring_append_fmt(ps->code, "  r0.a = %s;\n", qstring_get_str(g));
 
     QDECREF(ab);
@@ -660,21 +686,28 @@ static QString* psh_convert(struct PixelShader *ps)
     int i;
 
     QString *preflight = qstring_from_str("#version 110\n"
+                                          "#extension GL_ARB_texture_rectangle : enable\n"
                                           "\n");
     QString *vars = qstring_new();
 
     qstring_append(vars, "  vec4 v0 = gl_Color;\n");
     qstring_append(vars, "  vec4 v1 = gl_SecondaryColor;\n");
-    qstring_append(vars, "  vec4 fog = vec4(gl_Fog.color.rgb,gl_FogFragCoord);\n"); //FIXME: I have no idea what I'm doing!
+    qstring_append(vars, "  vec4 fog = vec4(gl_Fog.color.rgb, gl_FogFragCoord);\n"); //FIXME: I have no idea what I'm doing!
 
     for (i = 0; i < 4; i++) {
-        if (ps->tex_modes[i] == PS_TEXTUREMODES_NONE) continue;
 
         const char *sampler_type;
-        const char *sampler_function;
 
         switch (ps->tex_modes[i]) {
-        case PS_TEXTUREMODES_PROJECT2D:
+        case PS_TEXTUREMODES_NONE:
+            sampler_type = NULL;
+            /* This was added because Wreckless does access the texture unit
+               it might be a bug elsewhere.. */
+            qstring_append_fmt(vars, "  vec4 t%d = vec4(0.0); /* PS_TEXTUREMODES_NONE */\n",
+                               i);
+            break;
+        case PS_TEXTUREMODES_PROJECT2D: {
+            const char *sampler_function;
             if (ps->rect_tex[i]) {
                 sampler_type = "sampler2DRect";
                 sampler_function = "texture2DRect";
@@ -682,30 +715,94 @@ static QString* psh_convert(struct PixelShader *ps)
                 sampler_type = "sampler2D";
                 sampler_function = "texture2D";
             }
-            qstring_append_fmt(vars, "  vec4 t%d = %s(texSamp%d, gl_TexCoord[%d].xy);\n",
-                               i, sampler_function, i, i);
+            qstring_append_fmt(vars, "  vec4 t%d = %s(texSamp%d, gl_TexCoord[%d].xy / gl_TexCoord[%d].w);\n",
+                               i, sampler_function, i, i, i);
             break;
+        }
         case PS_TEXTUREMODES_PROJECT3D:
             sampler_type = "sampler3D";
-            qstring_append_fmt(vars, "  vec4 t%d = texture3D(texSamp%d, gl_TexCoord[%d].xyz);\n",
-                               i, i, i);
+            qstring_append_fmt(vars, "  vec4 t%d = texture3D(texSamp%d, gl_TexCoord[%d].xyz / gl_TexCoord[%d].w);\n",
+                               i, i, i, i);
             break;
         case PS_TEXTUREMODES_CUBEMAP:
             sampler_type = "samplerCube";
-            qstring_append_fmt(vars, "  vec4 t%d = textureCube(texSamp%d, gl_TexCoord[%d].xyz);\n",
-                               i, i, i);
+            qstring_append_fmt(vars, "  vec4 t%d = textureCube(texSamp%d, gl_TexCoord[%d].xyz / gl_TexCoord[%d].w);\n",
+                               i, i, i, i);
             break;
         case PS_TEXTUREMODES_PASSTHRU:
-            qstring_append_fmt(vars, "  vec4 t%d;\n", i);
+            sampler_type = NULL;
+            qstring_append_fmt(vars, "  vec4 t%d = gl_TexCoord[%d].xyzw;\n", i);
+            break;
+        case PS_TEXTUREMODES_DPNDNT_AR:
+            assert(!ps->rect_tex[i]);
+            sampler_type = "sampler2D";
+            qstring_append_fmt(vars, "  vec4 t%d = texture2D(texSamp%d, t%d.ar);\n",
+                               i, i, ps->input_tex[i]);
+            break;
+        case PS_TEXTUREMODES_DPNDNT_GB:
+            assert(!ps->rect_tex[i]);
+            sampler_type = "sampler2D";
+            qstring_append_fmt(vars, "  vec4 t%d = texture2D(texSamp%d, t%d.gb);\n",
+                               i, i, ps->input_tex[i]);
+            break;
+        case PS_TEXTUREMODES_CLIPPLANE: {
+            int j;
+            sampler_type = NULL;
+            /* Precaution, see note in PS_TEXTUREMODES_NONE */
+            qstring_append_fmt(vars, "  vec4 t%d = vec4(0.0); /* PS_TEXTUREMODES_CLIPPLANE */\n",
+                               i);
+            for(j = 0; j < 4; j++) {
+                qstring_append_fmt(vars, "  if(gl_TexCoord[%d].%c %s 0.0) { discard; };\n",
+                                   i, "xyzw"[j],
+                                   ps->compare_mode[i][j]?">=":"<");
+            }
+            break;
+        }
+        case PS_TEXTUREMODES_DOTPRODUCT:
+            sampler_type = NULL;
+            qstring_append_fmt(vars, "  vec4 t%d = vec4(dot(gl_TexCoord[%d].xyz, t%d.rgb));\n",
+                               i, i, ps->input_tex[i]);
+            break;
+
+        case PS_TEXTUREMODES_DOT_RFLCT_SPEC:
+        case PS_TEXTUREMODES_DOT_RFLCT_SPEC_CONST:
+            sampler_type = "samplerCube";
+            //FIXME: Somewhat untested?
+            /* This is really s = t[i-2] and t = t[i-1], but this is only
+               allowed in stage 3 anyway, so it must be s = t[1] and t = t[2].
+               Personally, I query the red / x component for the dot result
+               but in reality anything should work as this expects the use of
+               DOTPRODUCT earlier which means x=y=z=w */
+            assert(i == 3);
+            qstring_append_fmt(vars, "  float dot_s = t1.r;\n"
+                                     "  float dot_t = t2.r;\n"
+                                     "  float dot_r = dot(gl_TexCoord[3].xyz, t%i.rgb);\n"
+                                     "  vec3 n = vec3(dot_s, dot_t, dot_r);\n",
+                                     ps->input_tex[3]);
+            if (ps->tex_modes[i] == PS_TEXTUREMODES_DOT_RFLCT_SPEC) {
+                qstring_append_fmt(preflight, "uniform vec3 eye_vector;\n");
+                qstring_append_fmt(vars, "  vec3 e = eye_vector;\n");
+            } else {
+                qstring_append_fmt(vars, "  vec3 e = vec3(t0.a, t1.a, t2.a);\n");
+            }
+            qstring_append_fmt(vars, "  vec3 ne = 2.0 * n * dot(n, e) / dot(n, n) - e;\n"
+                                     "  vec4 t3 = textureCube(texSamp3, ne);\n");
             break;
         default:
-            printf("%x\n", ps->tex_modes[i]);
-            assert(false);
+            sampler_type = NULL;
+            printf("0x%x\n", ps->tex_modes[i]);
+            assert(0);
             break;
         }
         
-        if (ps->tex_modes[i] != PS_TEXTUREMODES_PASSTHRU) {
-            qstring_append_fmt(preflight, "uniform %s texSamp%d;\n", sampler_type, i);
+        if (sampler_type != NULL) {
+            qstring_append_fmt(preflight, "uniform %s texSamp%d;\n",
+                               sampler_type, i);
+            /* As this means a texture fetch does happen, do alphakill */
+            if (ps->alphakill[i]) {
+                qstring_append_fmt(vars, "  if (t%d.a == 0.0) { discard; };\n",
+                                   i);
+            }
         }
     }
 
@@ -767,6 +864,9 @@ static QString* psh_convert(struct PixelShader *ps)
                    "  }\n"
 #endif
     qstring_append(final, "\n"
+                          "#define c(x) clamp((x), -1.0, 1.0)\n"
+                          "#define u(x) max((x), 0.0)\n"
+                          "\n"
                           "void main() {\n"
                           "\n");
     qstring_append(final, qstring_get_str(vars));
@@ -774,7 +874,11 @@ static QString* psh_convert(struct PixelShader *ps)
     qstring_append(final, qstring_get_str(ps->code));
     qstring_append(final, "\n"
                           "  /* Set output */\n"
+#if 0 // Hack: Show all draw calls in 50% pink (intended to show transparency issues etc.)
+                          "  gl_FragColor = mix(r0, vec4(1.0, 0.0, 1.0, 1.0), 0.5);\n"
+#else
                           "  gl_FragColor = r0;\n"
+#endif
                           "\n"
                           "}\n");
 
@@ -824,7 +928,7 @@ QString *psh_translate(uint32_t combiner_control, uint32_t shader_stage_program,
                        /*uint32_t constant_0[8], uint32_t constant_1[8],*/
                        uint32_t final_inputs_0, uint32_t final_inputs_1,
                        /*uint32_t final_constant_0, uint32_t final_constant_1,*/
-                       bool rect_tex[4])
+                       bool rect_tex[4], bool compare_mode[4][4], bool alphakill[4])
 {
     int i;
     struct PixelShader ps;
@@ -835,6 +939,11 @@ QString *psh_translate(uint32_t combiner_control, uint32_t shader_stage_program,
     for (i = 0; i < 4; i++) {
         ps.tex_modes[i] = (shader_stage_program >> (i * 5)) & 0x1F;
         ps.rect_tex[i] = rect_tex[i];
+        int j;
+        for(j = 0; j < 4; j++) {
+            ps.compare_mode[i][j] = compare_mode[i][j];
+        }
+        ps.alphakill[i] = alphakill[i];
     }
 
     ps.input_tex[0] = -1;
