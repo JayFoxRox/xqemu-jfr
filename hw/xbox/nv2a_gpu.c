@@ -68,6 +68,7 @@ const char** feedback_varyings[] = {
 #define FB_H ((1 << 12)/4)
 
 
+#define GLSL_LOG_LENGTH 8192
 
 #define NV_NUM_BLOCKS 21
 #define NV_PMC          0   /* card master control */
@@ -1714,20 +1715,21 @@ static GLuint generate_shaders(PGRAPHState* pg, KelvinState* kelvin, ShaderState
                    /* constant_0, constant_1, */
                    state.final_inputs_0, state.final_inputs_1,
                    /* final_constant_0, final_constant_1, */
-                   state.rect_tex);
+                   state.rect_tex, state.compare_mode, state.alphakill);
 
     const char *fragment_shader_code_str = qstring_get_str(fragment_shader_code);
 
     NV2A_GPU_DPRINTF("bind new fragment shader, code:\n%s\n", fragment_shader_code_str);
 
-    glShaderSource(fragment_shader, 1, &fragment_shader_code_str, 0);
+    glShaderSource(fragment_shader, 1, &fragment_shader_code_str, NULL);
     glCompileShader(fragment_shader);
 
     /* Check it compiled */
     glGetShaderiv(fragment_shader, GL_COMPILE_STATUS, &compiled);
     if (!compiled) {
-        GLchar log[1024];
-        glGetShaderInfoLog(fragment_shader, 1024, NULL, log);
+        GLchar log[GLSL_LOG_LENGTH];
+        glGetShaderInfoLog(fragment_shader, GLSL_LOG_LENGTH, NULL, log);
+        log[GLSL_LOG_LENGTH - 1] = '\0';
         fprintf(stderr, "\n\n%s\n", fragment_shader_code_str);
         fprintf(stderr, "nv2a: fragment shader compilation failed: %s\n", log);
         abort();
@@ -1743,8 +1745,9 @@ static GLuint generate_shaders(PGRAPHState* pg, KelvinState* kelvin, ShaderState
     GLint linked = 0;
     glGetProgramiv(program, GL_LINK_STATUS, &linked);
     if(!linked) {
-        GLchar log[1024];
-        glGetProgramInfoLog(program, 1024, NULL, log);
+        GLchar log[GLSL_LOG_LENGTH];
+        glGetProgramInfoLog(program, GLSL_LOG_LENGTH, NULL, log);
+        log[GLSL_LOG_LENGTH - 1] = '\0';
         fprintf(stderr, "nv2a: shader linking failed: %s\n", log);
         abort();
     }
@@ -1766,8 +1769,9 @@ static GLuint generate_shaders(PGRAPHState* pg, KelvinState* kelvin, ShaderState
     GLint valid = 0;
     glGetProgramiv(program, GL_VALIDATE_STATUS, &valid);
     if (!valid) {
-        GLchar log[1024];
-        glGetProgramInfoLog(program, 1024, NULL, log);
+        GLchar log[GLSL_LOG_LENGTH];
+        glGetProgramInfoLog(program, GLSL_LOG_LENGTH, NULL, log);
+        log[GLSL_LOG_LENGTH - 1] = '\0';
         fprintf(stderr, "nv2a: shader validation failed: %s\n", log);
         abort();
     }
