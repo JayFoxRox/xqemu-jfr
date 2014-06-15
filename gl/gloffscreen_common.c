@@ -116,7 +116,7 @@ int glo_flags_score(int formatFlagsExpected, int formatFlagsReal) {
   return score;
 }
 
-
+#define GETCONTENTS_INDIVIDUAL /* Necessary because we use PBOs and don't want the CPU to interact! */
 void glo_readpixels(GLenum gl_format, GLenum gl_type,
                     unsigned int bytes_per_pixel, unsigned int stride,
                     unsigned int width, unsigned int height, void *data)

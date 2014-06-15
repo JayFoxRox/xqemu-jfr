@@ -285,9 +285,13 @@ void glo_context_destroy(GloContext *context)
 
 /* Check extension implementation for Windows.
  * The Glu 1.2 framework in Windows doesn't include them... */
-GLboolean glo_check_extension(const GLubyte *extName,
-    const GLubyte *extString)
+GLboolean glo_check_extension(const GLubyte *extName)
 {
+    static const GLubyte *extString = NULL;
+    if (extString == NULL) {
+        extString = glGetString(GL_EXTENSIONS);
+    }
+
     const char *p = extString;
     const char *end;
     if (p == NULL) {

@@ -70,9 +70,12 @@ GloContext *glo_context_create(int formatFlags)
 }
 
 /* Check if an extension is available. */
-GLboolean glo_check_extension(const GLubyte *extName,
-    const GLubyte *extString)
+GLboolean glo_check_extension(const GLubyte *extName)
 {
+    static const GLubyte *extString = NULL;
+    if (extString == NULL) {
+        extString = glGetString(GL_EXTENSIONS);
+    }
     return gluCheckExtension(extName, extString);
 }
 

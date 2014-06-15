@@ -2717,42 +2717,33 @@ static void pgraph_init(PGRAPHState *pg)
     debugger_push_group("NV2A: pgraph_init");
 
     /* Check context capabilities */
-    const GLubyte *extensions = glGetString(GL_EXTENSIONS);
 
     assert(glo_check_extension((const GLubyte *)
-                             "GL_EXT_texture_compression_s3tc",
-                             extensions));
+                             "GL_EXT_texture_compression_s3tc"));
 
     assert(glo_check_extension((const GLubyte *)
-                             "GL_EXT_framebuffer_object",
-                             extensions));
+                             "GL_EXT_framebuffer_object"));
 
     assert(glo_check_extension((const GLubyte *)
-                             "GL_ARB_texture_rectangle",
-                             extensions));
+                             "GL_ARB_texture_rectangle"));
 
     assert(glo_check_extension((const GLubyte *)
-                             "GL_ARB_vertex_array_bgra",
-                             extensions));
+                             "GL_ARB_vertex_array_bgra"));
 
     assert(glo_check_extension((const GLubyte *)
-                             "GL_EXT_packed_depth_stencil",
-                             extensions));
+                             "GL_EXT_packed_depth_stencil"));
 
 #ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK
     assert(glo_check_extension((const GLubyte *)
-                             "GL_EXT_transform_feedback",
-                             extensions));
+                             "GL_EXT_transform_feedback"));
 #endif
 
 #ifdef LP
     assert(glo_check_extension((const GLubyte *)
-                             "GL_ARB_color_buffer_float",
-                             extensions));
+                             "GL_ARB_color_buffer_float"));
 
     assert(glo_check_extension((const GLubyte *)
-                             "GL_ARB_texture_float",
-                             extensions));
+                             "GL_ARB_texture_float"));
 
     test_launchprogram();
 #endif

@@ -1,17 +1,9 @@
 static unsigned int debugger_frame = 0; /* apitrace also starts at "Frame 0" */
+static unsigned int debugger_group_level = 0;
 
 static void debugger_label(GLenum identifier, GLuint name, const char* fmt, ...) {
 
-    static bool initialized = false;
-    static void(*imported_glObjectLabelKHR)(GLenum identifier, GLuint name, GLsizei length, const char *label) = NULL;
-    if (!initialized) {
-        const GLubyte *extensions = glGetString(GL_EXTENSIONS);
-        if (glo_check_extension((const GLubyte *)"GL_KHR_debug",extensions)) {
-            imported_glObjectLabelKHR = glo_get_extension_proc((const GLubyte *)"glObjectLabel");
-        }
-        initialized = true;
-    }
-    if (!imported_glObjectLabelKHR) {
+    if (!glo_check_extension((const GLubyte *)"GL_KHR_debug")) {
         return;
     }
 
@@ -21,13 +13,18 @@ static void debugger_label(GLenum identifier, GLuint name, const char* fmt, ...)
     vsprintf (buffer, fmt, args);
 
     assert(glGetError()==GL_NO_ERROR);
-    imported_glObjectLabelKHR(identifier, name, -1, buffer);
+    glObjectLabel(identifier, name, -1, buffer);
     while(glGetError()!=GL_NO_ERROR); //FIXME: This is necessary because GLX does always return a proc currently..
 
     va_end (args);
 }
 
 static void debugger_message(const char* fmt, ...) {
+
+    if (!glo_check_extension((const GLubyte *)"GL_KHR_debug")) {
+        return;
+    }
+
     char buffer[512];
     va_list args;
     va_start (args, fmt);
@@ -40,31 +37,38 @@ static void debugger_message(const char* fmt, ...) {
 }
 
 static void debugger_push_group(const char* fmt, ...) {
+
+    if (!glo_check_extension((const GLubyte *)"GL_KHR_debug")) {
+        return;
+    }
+
     char buffer[512];
     va_list args;
     va_start (args, fmt);
     vsprintf (buffer, fmt, args);
     glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0x0, -1, buffer);
+    debugger_group_level++;
     va_end (args);
 }
 
 static void debugger_pop_group(void) {
+
+    if (!glo_check_extension((const GLubyte *)"GL_KHR_debug")) {
+        return;
+    }
+
+    assert(debugger_group_level > 0);
     glPopDebugGroup();
+    debugger_group_level--;
 }
 
 static void debugger_finish_frame(void) {
-    static bool initialized = false;
-    static void(*imported_glFrameTerminatorGREMEDY)(void) = NULL;
-    if (!initialized) {
-        const GLubyte *extensions = glGetString(GL_EXTENSIONS);
-        if (glo_check_extension((const GLubyte *)"GL_GREMEDY_frame_terminator",extensions)) {
-            imported_glFrameTerminatorGREMEDY = glo_get_extension_proc((const GLubyte *)"glFrameTerminatorGREMEDY");
-        }
-        initialized = true;
+
+    if (!glo_check_extension((const GLubyte *)"GL_GREMEDY_frame_terminator")) {
+        return;
     }
-    if (imported_glFrameTerminatorGREMEDY) {
-        imported_glFrameTerminatorGREMEDY();
-    }
+
+    glFrameTerminatorGREMEDY();
     debugger_frame++;
 }
 
