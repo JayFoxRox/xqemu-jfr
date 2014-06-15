@@ -396,7 +396,7 @@ static QemuOptsList qemu_machine_opts = {
             .help = "Xbox MCPX XMode (2 or 3)",
         },{
             .name = "xbox_smc_version",
-            .type = QEMU_OPT_NUMBER,
+            .type = QEMU_OPT_STRING,
             .help = "Xbox SMC version",
         },{
             .name = "xbox_smc_scratch",
