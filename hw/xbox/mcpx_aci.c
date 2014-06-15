@@ -67,9 +67,7 @@ static int mcpx_aci_initfn(PCIDevice *dev)
     pci_register_bar(&d->ac97.dev, 2, PCI_BASE_ADDRESS_SPACE_MEMORY, &d->mmio);
 #endif
 
-uint8_t* c = d->ac97.dev.config;
-printf("c[PCI_INTERRUPT_PIN] = 0x%X\n",c[PCI_INTERRUPT_PIN]);
-printf("c[PCI_VENDOR_ID] = 0x%X\n",c[PCI_VENDOR_ID]);
+    uint8_t* c = d->ac97.dev.config;
 #if 1
     c[PCI_INTERRUPT_PIN] = 0x01;
     c[PCI_INTERRUPT_LINE] = 0x06;
