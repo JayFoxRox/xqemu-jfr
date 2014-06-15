@@ -265,7 +265,12 @@ static void smc_start_watchdog(SMBusSMCDevice* smc_dev) {
     smc_dev->watchdog_challenge[0] = 0x00;
     smc_dev->watchdog_challenge[1] = 0x00;
     smc_dev->watchdog_challenge[2] = 0x00;
+#if 1
+    /* FIXME: This is just a hack to have a watchdog which works in a retail machine but still never activates the actual watchdog */
+    smc_dev->watchdog_challenge[3] = 0x01;
+#else
     smc_dev->watchdog_challenge[3] = 0x00;
+#endif
     return;
   }
 #if 1 //FIXME: Remove the upper part, only for testing
@@ -308,6 +313,7 @@ FIXME!
   //FIXME: Check if challenge was correct
   {
     // Disable watchdog
+    printf("Deleting timer!\n");
     timer_del(smc_dev->watchdog_timer);
     printf("Watchdog stopped!\n");
   }
