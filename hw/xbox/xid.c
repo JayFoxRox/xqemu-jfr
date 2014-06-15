@@ -22,7 +22,7 @@
 #include "hw/usb.h"
 #include "hw/usb/desc.h"
 
-//#define DEBUG_XID
+#define DEBUG_XID
 #ifdef DEBUG_XID
 #define DPRINTF printf
 #else
@@ -188,30 +188,42 @@ static void xbox_gamepad_keyboard_event(void *opaque, int keycode)
     bool up = keycode & 0x80;
     uint8_t key = keycode & 0x7F;
 #if 1
+    uint16_t mask = 0x0000;
     if (key == 0x1e) {
         s->in_state.bAnalogButtons[GAMEPAD_A] = up?0:0xff;
     } else if (key == 0x30) {
         s->in_state.bAnalogButtons[GAMEPAD_B] = up?0:0xff;
     } else if (key == 0x2d) {
         s->in_state.bAnalogButtons[GAMEPAD_X] = up?0:0xff;
-    } else if (key == 0x15) {
+    } else if ((key == 0x15) || (key == 0x2c)) {
         s->in_state.bAnalogButtons[GAMEPAD_Y] = up?0:0xff;
+    } else if (key == 0x38) {
+        s->in_state.bAnalogButtons[GAMEPAD_BLACK] = up?0:0xff;
+    } else if (key == 0x1d) {
+        s->in_state.bAnalogButtons[GAMEPAD_WHITE] = up?0:0xff;
     } else if (key == 0x26) {
         s->in_state.bAnalogButtons[GAMEPAD_LEFT_TRIGGER] = up?0:0xff;
     } else if (key == 0x13) {
         s->in_state.bAnalogButtons[GAMEPAD_RIGHT_TRIGGER] = up?0:0xff;
+    } else if (key == 0x53) { //FIXME: These won't work!
+        mask = (1 << (GAMEPAD_DPAD_UP-GAMEPAD_DPAD_UP));
+    } else if (key == 0x54) {
+        mask = (1 << (GAMEPAD_DPAD_DOWN-GAMEPAD_DPAD_UP));
+    } else if (key == 0x4f) {
+        mask = (1 << (GAMEPAD_DPAD_LEFT-GAMEPAD_DPAD_UP));
+    } else if (key == 0x59) {
+        mask = (1 << (GAMEPAD_DPAD_RIGHT-GAMEPAD_DPAD_UP));
     } else if (key == 0x1c) {
-        uint16_t mask = (1 << (GAMEPAD_START-GAMEPAD_DPAD_UP));
-        s->in_state.wButtons &= ~mask;
-        if (!up) s->in_state.wButtons |= mask;
+        mask = (1 << (GAMEPAD_START-GAMEPAD_DPAD_UP));
     } else if (key == 0x0e) {
-        uint16_t mask = (1 << (GAMEPAD_BACK-GAMEPAD_DPAD_UP));
-        s->in_state.wButtons &= ~mask;
-        if (!up) s->in_state.wButtons |= mask;
+        mask = (1 << (GAMEPAD_BACK-GAMEPAD_DPAD_UP));
     } else {
-        printf("Broken in v2.0.0 until Gerds new input layer is merged."
-               "Mapping Start (Enter), Back (Backspace), LT (L), RT (R), A, B, X and Y to keyboard.\n");
+        fprintf(stderr,"Unknown key 0x%02x. Broken in v2.0.0 until Gerds new input layer is merged.\n"
+                       "Mapping Start (Enter), Back (Backspace), Black (Ctrl-L), White (Alt-L), LT (L), RT (R), Digital-Pad (Arrow keys), A (A), B (B), X (X) and Y (Y/Z) to keyboard.\n",
+                        key);
     }
+    s->in_state.wButtons &= ~mask;
+    if (!up) s->in_state.wButtons |= mask;
 #else
     QKeyCode code = index_from_keycode(keycode & 0x7f);
     if (code >= Q_KEY_CODE_MAX) return;
@@ -247,8 +259,16 @@ static void usb_xid_handle_control(USBDevice *dev, USBPacket *p,
 {
     USBXIDState *s = DO_UPCAST(USBXIDState, dev, dev);
 
-    DPRINTF("xid handle_control 0x%x 0x%x\n", request, value);
-
+    static unsigned int pid = 0;
+    static size_t bytes = 0;
+    DPRINTF("xid handle_control 0x%x 0x%x, packet %zu, byte %d\n", request, value, ++pid, bytes += length);
+#if 0
+    if ((request == USB_REQ_SET_CONFIGURATION) && (value == 1)) {
+        /* The OpenXDK code will try to set configuration 1 on every read */
+        DPRINTF("xid handled by configuration hack\n");
+        return;
+    }
+#endif
     int ret = usb_desc_handle_control(dev, p, request, value, index, length, data);
     if (ret >= 0) {
         DPRINTF("xid handled by usb_desc_handle_control: %d\n",ret);
@@ -261,6 +281,7 @@ static void usb_xid_handle_control(USBDevice *dev, USBPacket *p,
         DPRINTF("xid GET_REPORT 0x%x\n", value);
         if (value == 0x100) { /* input */
             assert(s->in_state.bLength <= length);
+//            s->in_state.bReportId++; FIXME: Like this?
             memcpy(data, &s->in_state, s->in_state.bLength);
             p->actual_length = s->in_state.bLength;
         } else {
@@ -271,13 +292,9 @@ static void usb_xid_handle_control(USBDevice *dev, USBPacket *p,
         DPRINTF("xid SET_REPORT 0x%x\n", value);
         if (value == 0x200) { /* output */
             /* Read length, then the entire packet */
-            assert(length > 2);
-            memcpy(&s->out_state, data, 2);
+            memcpy(&s->out_state, data, sizeof(s->out_state));
             assert(s->out_state.length == sizeof(s->out_state));
             assert(s->out_state.length <= length);
-            memcpy(((uintptr_t)&s->out_state) + 2,
-                   ((uintptr_t)data) + 2,
-                   s->out_state.length - 2);
             //FIXME: Check actuator endianess
             printf("Set rumble power to 0x%x, 0x%x\n",
                    s->out_state.left_actuator_strength,
@@ -300,6 +317,15 @@ static void usb_xid_handle_control(USBDevice *dev, USBPacket *p,
         break;
     case VendorInterfaceRequest | XID_GET_CAPABILITIES:
         DPRINTF("xid XID_GET_CAPABILITIES 0x%x\n", value);
+        //FIXME: !
+        p->status = USB_RET_STALL;
+        //assert(false);
+        break;
+    case ((USB_DIR_IN|USB_TYPE_CLASS|USB_RECIP_DEVICE)<<8) | 0x06:
+        DPRINTF("xid unknown xpad request 1: value = 0x%x\n", value);
+        memset(data, 0x00, length);
+        //FIXME: Intended for the hub: usbd_get_hub_descriptor, UT_READ_CLASS?!
+        p->status = USB_RET_STALL;
         //assert(false);
         break;
     default:
@@ -314,7 +340,7 @@ static void usb_xid_handle_data(USBDevice *dev, USBPacket *p)
 {
     USBXIDState *s = DO_UPCAST(USBXIDState, dev, dev);
 
-    DPRINTF("xid handle_data %x %d %zx\n", p->pid, p->ep->nr, p->iov.size);
+    DPRINTF("xid handle_data 0x%x %d 0x%zx\n", p->pid, p->ep->nr, p->iov.size);
 
     switch (p->pid) {
     case USB_TOKEN_IN:
@@ -324,7 +350,11 @@ static void usb_xid_handle_data(USBDevice *dev, USBPacket *p)
             assert(false);
         }
         break;
+    case USB_TOKEN_OUT:
+        p->status = USB_RET_STALL;
+        break;
     default:
+        p->status = USB_RET_STALL;
         assert(false);
         break;
     }
@@ -353,6 +383,7 @@ static int usb_xbox_gamepad_initfn(USBDevice *dev)
     s->intr = usb_ep_get(dev, USB_TOKEN_IN, 2);
 
     s->in_state.bLength = sizeof(s->in_state);
+    s->out_state.length = sizeof(s->out_state);
     s->kbd_entry = qemu_add_kbd_event_handler(xbox_gamepad_keyboard_event, s);
     s->xid_desc = &desc_xid_xbox_gamepad;
 
