@@ -2003,11 +2003,30 @@ static void ohci_pci_class_init(ObjectClass *klass, void *data)
     dc->hotpluggable = false;
 }
 
+static void ohci_pci_class_xbox_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
+
+    k->init = usb_ohci_initfn_pci;
+    k->vendor_id = PCI_VENDOR_ID_NVIDIA;
+    k->device_id = PCI_DEVICE_ID_NVIDIA_NFORCE_USB;
+    k->class_id = PCI_CLASS_SERIAL_USB;
+    set_bit(DEVICE_CATEGORY_USB, dc->categories);
+    dc->desc = "Xbox USB Controller"; /* FIXME: Is this only for qemu or PCI? */
+    dc->props = ohci_pci_properties;
+    dc->hotpluggable = false;
+}
+
 static const TypeInfo ohci_pci_info = {
     .name          = TYPE_PCI_OHCI,
     .parent        = TYPE_PCI_DEVICE,
     .instance_size = sizeof(OHCIPCIState),
+#if 1
+    .class_init    = ohci_pci_class_xbox_init,
+#else
     .class_init    = ohci_pci_class_init,
+#endif
 };
 
 static Property ohci_sysbus_properties[] = {
