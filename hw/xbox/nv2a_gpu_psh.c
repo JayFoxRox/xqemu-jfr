@@ -687,7 +687,7 @@ static QString* psh_convert(struct PixelShader *ps)
 
     QString *preflight = qstring_from_str(
                             "#version 110\n"
-                            "#extension GL_ARB_texture_rectangle : enable\n"
+                            "#extension GL_ARB_texture_rectangle : require\n"
                             "\n"
                             /* FIXME: Maybe as macros to speed up some stuff?
                                       _vsh could also use some inlining, so
@@ -713,7 +713,7 @@ static QString* psh_convert(struct PixelShader *ps)
                             "\n"
                             "vec4 flipTextureCube(samplerCube sampler, vec3 texCoord)\n"
                             "{\n"
-                            "   return textureCube(sampler, vec3(texCoord.x,-texCoord.y,texCoord.z));\n"
+                            "   return textureCube(sampler, vec3(texCoord.x, -texCoord.y, texCoord.z));\n"
                             "}\n"
                             "\n");
 
@@ -721,7 +721,7 @@ static QString* psh_convert(struct PixelShader *ps)
 
     qstring_append(vars, "  vec4 v0 = gl_Color;\n");
     qstring_append(vars, "  vec4 v1 = gl_SecondaryColor;\n");
-    qstring_append(vars, "  vec4 fog = vec4(gl_Fog.color.xyz, clamp(gl_FogFragCoord,0.0,1.0));\n"); //FIXME: I have no idea what I'm doing!
+    qstring_append(vars, "  vec4 fog = vec4(gl_Fog.color.xyz, clamp(gl_FogFragCoord, 0.0, 1.0));\n"); //FIXME: I have no idea what I'm doing!
 
     for (i = 0; i < 4; i++) {
 
