@@ -345,6 +345,60 @@
 #define NV_PGRAPH_SHADERPROG                             0x0000199C
 #define NV_PGRAPH_SPECFOGFACTOR0                         0x000019AC
 #define NV_PGRAPH_SPECFOGFACTOR1                         0x000019B0
+
+//FIXME: Not imlemented {
+#define NV_PGRAPH_TEXADDRESS0                            0x000019BC
+#define NV_PGRAPH_TEXADDRESS1                            0x000019C0
+#define NV_PGRAPH_TEXADDRESS2                            0x000019C4
+#define NV_PGRAPH_TEXADDRESS3                            0x000019C8
+#define NV_PGRAPH_TEXCTL0_0                              0x000019CC
+#   define NV_PGRAPH_TEXCTL0_0_ENABLE                           (1 << 30) /* Bool */
+#   define NV_PGRAPH_TEXCTL0_0_MIN_LOD_CLAMP                    0x3FFC0000
+#   define NV_PGRAPH_TEXCTL0_0_MAX_LOD_CLAMP                    0x0003FFC0
+#   define NV_PGRAPH_TEXCTL0_0_LOG_MAX_ANISO                    (3 << 4) /* 2 bits, value [0,3] */
+#   define NV_PGRAPH_TEXCTL0_0_ALPHAKILLEN                      (1 << 2) /* Bool */
+    //FIXME: Unfinished
+#define NV_PGRAPH_TEXCTL0_1                              0x000019D0
+#define NV_PGRAPH_TEXCTL0_2                              0x000019D4
+#define NV_PGRAPH_TEXCTL0_3                              0x000019D8
+#define NV_PGRAPH_TEXCTL1_0                              0x000019DC
+#   define NV_PGRAPH_TEXCTL1_0_IMAGE_PITCH                      0xFFFF0000
+#define NV_PGRAPH_TEXCTL1_1                              0x000019E0
+#define NV_PGRAPH_TEXCTL1_2                              0x000019E4
+#define NV_PGRAPH_TEXCTL1_3                              0x000019E8
+#define NV_PGRAPH_TEXCTL2_0                              0x000019EC
+#define NV_PGRAPH_TEXCTL2_1                              0x000019F0
+#define NV_PGRAPH_TEXFILTER0                             0x000019F4
+#   define NV_PGRAPH_TEXFILTER0_MIPMAP_LOD_BIAS                 0x00001FFF
+#   define NV_PGRAPH_TEXFILTER0_MIN                             0x003F0000
+#   define NV_PGRAPH_TEXFILTER0_MAG                             0x0F000000
+#define NV_PGRAPH_TEXFILTER1                             0x000019F8
+#define NV_PGRAPH_TEXFILTER2                             0x000019FC
+#define NV_PGRAPH_TEXFILTER3                             0x00001A00
+#define NV_PGRAPH_TEXFMT0                                0x00001A04
+#   define NV_PGRAPH_TEXFMT0_CONTEXT_DMA                        (1 << 1)
+#   define NV_PGRAPH_TEXFMT0_CUBEMAPENABLE                      (1 << 2)
+#   define NV_PGRAPH_TEXFMT0_DIMENSIONALITY                     0x000000C0
+#   define NV_PGRAPH_TEXFMT0_COLOR                              0x00007F00
+#   define NV_PGRAPH_TEXFMT0_MIPMAP_LEVELS                      0x000F0000
+#   define NV_PGRAPH_TEXFMT0_BASE_SIZE_U                        0x00F00000
+#   define NV_PGRAPH_TEXFMT0_BASE_SIZE_V                        0x0F000000
+#   define NV_PGRAPH_TEXFMT0_BASE_SIZE_P                        0xF0000000
+#define NV_PGRAPH_TEXFMT1                                0x00001A08
+#define NV_PGRAPH_TEXFMT2                                0x00001A0C
+#define NV_PGRAPH_TEXFMT3                                0x00001A10
+#define NV_PGRAPH_TEXIMAGERECT0                          0x00001A14
+#   define NV_PGRAPH_TEXIMAGERECT0_WIDTH                        0x1FFF0000
+#   define NV_PGRAPH_TEXIMAGERECT0_HEIGHT                       0x00001FFF
+#define NV_PGRAPH_TEXIMAGERECT1                          0x00001A18
+#define NV_PGRAPH_TEXIMAGERECT2                          0x00001A1C
+#define NV_PGRAPH_TEXIMAGERECT3                          0x00001A20
+#define NV_PGRAPH_TEXOFFSET0                             0x00001A24
+#define NV_PGRAPH_TEXOFFSET1                             0x00001A28
+#define NV_PGRAPH_TEXOFFSET2                             0x00001A2C
+#define NV_PGRAPH_TEXOFFSET3                             0x00001A30
+//FIXME: }
+
 #define NV_PGRAPH_ZSTENCILCLEARVALUE                     0x00001A88
 #define NV_PGRAPH_ZCLIPMAX                               0x00001ABC
 #define NV_PGRAPH_ZCLIPMIN                               0x00001A90

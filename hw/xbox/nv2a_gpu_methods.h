@@ -207,6 +207,7 @@
 #   define NV097_SET_VERTEX_DATA4S_M                          0x00971980 /* 16*2 ? */
 #   define NV097_SET_TEXTURE_OFFSET                           0x00971B00
 #   define NV097_SET_TEXTURE_FORMAT                           0x00971B04
+#       define NV097_SET_TEXTURE_FORMAT_CUBEMAP_ENABLE            (1 << 2) /* Bool */
 #       define NV097_SET_TEXTURE_FORMAT_CONTEXT_DMA               0x00000003
 #       define NV097_SET_TEXTURE_FORMAT_DIMENSIONALITY            0x000000F0
 #       define NV097_SET_TEXTURE_FORMAT_COLOR                     0x0000FF00
@@ -226,8 +227,15 @@
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8             0x19
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_X8R8G8B8 0x1E
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_LC_IMAGE_CR8YB8CB8YA8 0x24
+#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_DEPTH_X8_Y24_FIXED 0x2A
+#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_DEPTH_X8_Y24_FLOAT 0x2B
+#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_DEPTH_Y16_FIXED 0x2C
+#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_DEPTH_Y16_FLOAT 0x2D
+#           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_X8_Y24_FIXED 0x2E
+#           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_X8_Y24_FLOAT 0x2F
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_Y16_FIXED 0x30
-#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8B8G8R8       0x3A
+#           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_Y16_FLOAT 0x31
+#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8B8G8R8      0x3A
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8B8G8R8 0x3F
 #       define NV097_SET_TEXTURE_FORMAT_MIPMAP_LEVELS             0x000F0000
 #       define NV097_SET_TEXTURE_FORMAT_BASE_SIZE_U               0x00F00000
@@ -324,14 +332,14 @@
 #   define NV097_SET_STENCIL_OP_ZFAIL                         0x00970374
 #   define NV097_SET_STENCIL_OP_ZPASS                         0x00970378
 // Used for the 3 methods above
-#   define NV097_SET_STENCIL_OP_KEEP                              0x00001E00
-#   define NV097_SET_STENCIL_OP_ZERO                              0x00000000
-#   define NV097_SET_STENCIL_OP_REPLACE                           0x00001E01
-#   define NV097_SET_STENCIL_OP_INCRSAT                           0x00001E02
-#   define NV097_SET_STENCIL_OP_DECRSAT                           0x00001E03
-#   define NV097_SET_STENCIL_OP_INVERT                            0x0000150A
-#   define NV097_SET_STENCIL_OP_INCR                              0x00008507
-#   define NV097_SET_STENCIL_OP_DECR                              0x00008508
+#       define NV097_SET_STENCIL_OP_KEEP                          0x00001E00
+#       define NV097_SET_STENCIL_OP_ZERO                          0x00000000
+#       define NV097_SET_STENCIL_OP_REPLACE                       0x00001E01
+#       define NV097_SET_STENCIL_OP_INCRSAT                       0x00001E02
+#       define NV097_SET_STENCIL_OP_DECRSAT                       0x00001E03
+#       define NV097_SET_STENCIL_OP_INVERT                        0x0000150A
+#       define NV097_SET_STENCIL_OP_INCR                          0x00008507
+#       define NV097_SET_STENCIL_OP_DECR                          0x00008508
 
 // These are comparision functions and use map_method_to_..._func
 #   define NV097_SET_STENCIL_FUNC                            0x00970364
@@ -388,6 +396,4 @@
 #       define NV097_SET_FRONT_FACE_CW                            0x00000900
 #       define NV097_SET_FRONT_FACE_CCW                           0x00000901
 
-#   define NV097_SET_EDGE_FLAG                               0x009716bc
-#       define NV097_SET_EDGE_FLAG_FALSE                          0x00000000
-#       define NV097_SET_EDGE_FLAG_TRUE                           0x00000001
+#   define NV097_SET_EDGE_FLAG                               0x009716bc /* Bool */
