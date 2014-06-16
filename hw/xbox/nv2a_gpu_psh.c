@@ -715,6 +715,8 @@ static QString* psh_convert(struct PixelShader *ps)
                             "{\n"
                             "   return textureCube(sampler, vec3(texCoord.x,-texCoord.y,texCoord.z));\n"
                             "}\n"
+                            "\n");
+
     QString *vars = qstring_new();
 
     qstring_append(vars, "  vec4 v0 = gl_Color;\n");
