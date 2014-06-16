@@ -612,6 +612,7 @@ static const char* vsh_header =
     "vec4 R12;\n"
     "\n"
     "#define oPos R12 /* oPos is a mirror of R12 */\n"
+#if 0
     "vec4 oD0;\n"
     "vec4 oD1;\n"
     "vec4 oB0;\n"
@@ -622,6 +623,19 @@ static const char* vsh_header =
     "vec4 oT1;\n"
     "vec4 oT2;\n"
     "vec4 oT3;\n"
+#else
+    //FIXME: Investigate why dolphin uses uninitialed registers and what they should contain (probably generic attributes set in regs?)
+    "vec4 oD0 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oD1 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oB0 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oB1 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oPts = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oFog = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oT0 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oT1 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oT2 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oT3 = vec4(0.0,0.0,0.0,1.0);\n"
+#endif
     "\n"
 
     /* All constants in 1 array declaration */
