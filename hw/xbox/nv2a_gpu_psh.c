@@ -685,9 +685,36 @@ static QString* psh_convert(struct PixelShader *ps)
 {
     int i;
 
-    QString *preflight = qstring_from_str("#version 110\n"
-                                          "#extension GL_ARB_texture_rectangle : enable\n"
-                                          "\n");
+    QString *preflight = qstring_from_str(
+                            "#version 110\n"
+                            "#extension GL_ARB_texture_rectangle : enable\n"
+                            "\n"
+                            /* FIXME: Maybe as macros to speed up some stuff?
+                                      _vsh could also use some inlining, so
+                                      maybe we can also run those functions on
+                                      the cpu and inline the entire program.
+                                      however, we should also make sure to
+                                      make that optional so we can still
+                                      debug stuff */
+                            "vec4 flipTexture2D(sampler2D sampler, vec2 texCoord)\n"
+                            "{\n"
+                            "   return texture2D(sampler, vec2(texCoord.x, 1.0 - texCoord.y));\n"
+                            "}\n"
+                            "\n"
+                            "vec4 flipTexture2DRect(sampler2DRect sampler, vec2 texCoord, vec2 texSize)\n"
+                            "{\n"
+                            "   return texture2DRect(sampler, vec2(texCoord.x, texSize.y - texCoord.y));\n"
+                            "}\n"
+                            "\n"
+                            "vec4 flipTexture3D(sampler3D sampler, vec3 texCoord)\n"
+                            "{\n"
+                            "   return texture3D(sampler, vec3(texCoord.x, 1.0 - texCoord.y, texCoord.z));\n"
+                            "}\n"
+                            "\n"
+                            "vec4 flipTextureCube(samplerCube sampler, vec3 texCoord)\n"
+                            "{\n"
+                            "   return textureCube(sampler, vec3(texCoord.x,-texCoord.y,texCoord.z));\n"
+                            "}\n"
     QString *vars = qstring_new();
 
     qstring_append(vars, "  vec4 v0 = gl_Color;\n");
@@ -707,26 +734,31 @@ static QString* psh_convert(struct PixelShader *ps)
                                i);
             break;
         case PS_TEXTUREMODES_PROJECT2D: {
-            const char *sampler_function;
             if (ps->rect_tex[i]) {
+#if 0
+                sampler_type = "sampler2D";
+                qstring_append_fmt(vars, "  vec4 t%d = flipTexture2D(texSamp%d, (gl_TexCoord[%d].xy / gl_TexCoord[%d].w) / texSize%d);\n",
+                                   i, sampler_function, i, i, i, i);
+#else
                 sampler_type = "sampler2DRect";
-                sampler_function = "texture2DRect";
+                qstring_append_fmt(vars, "  vec4 t%d = flipTexture2DRect(texSamp%d, gl_TexCoord[%d].xy / gl_TexCoord[%d].w, texSize%d);\n",
+                                   i, i, i, i, i);
+#endif
             } else {
                 sampler_type = "sampler2D";
-                sampler_function = "texture2D";
+                qstring_append_fmt(vars, "  vec4 t%d = flipTexture2D(texSamp%d, gl_TexCoord[%d].xy / gl_TexCoord[%d].w);\n",
+                                   i, i, i, i);
             }
-            qstring_append_fmt(vars, "  vec4 t%d = %s(texSamp%d, gl_TexCoord[%d].xy / gl_TexCoord[%d].w);\n",
-                               i, sampler_function, i, i, i);
             break;
         }
         case PS_TEXTUREMODES_PROJECT3D:
             sampler_type = "sampler3D";
-            qstring_append_fmt(vars, "  vec4 t%d = texture3D(texSamp%d, gl_TexCoord[%d].xyz / gl_TexCoord[%d].w);\n",
+            qstring_append_fmt(vars, "  vec4 t%d = flipTexture3D(texSamp%d, gl_TexCoord[%d].xyz / gl_TexCoord[%d].w);\n",
                                i, i, i, i);
             break;
         case PS_TEXTUREMODES_CUBEMAP:
             sampler_type = "samplerCube";
-            qstring_append_fmt(vars, "  vec4 t%d = textureCube(texSamp%d, gl_TexCoord[%d].xyz / gl_TexCoord[%d].w);\n",
+            qstring_append_fmt(vars, "  vec4 t%d = flipTextureCube(texSamp%d, gl_TexCoord[%d].xyz / gl_TexCoord[%d].w);\n",
                                i, i, i, i);
             break;
         case PS_TEXTUREMODES_PASSTHRU:
@@ -736,13 +768,13 @@ static QString* psh_convert(struct PixelShader *ps)
         case PS_TEXTUREMODES_DPNDNT_AR:
             assert(!ps->rect_tex[i]);
             sampler_type = "sampler2D";
-            qstring_append_fmt(vars, "  vec4 t%d = texture2D(texSamp%d, t%d.ar);\n",
+            qstring_append_fmt(vars, "  vec4 t%d = flipTexture2D(texSamp%d, t%d.ar);\n",
                                i, i, ps->input_tex[i]);
             break;
         case PS_TEXTUREMODES_DPNDNT_GB:
             assert(!ps->rect_tex[i]);
             sampler_type = "sampler2D";
-            qstring_append_fmt(vars, "  vec4 t%d = texture2D(texSamp%d, t%d.gb);\n",
+            qstring_append_fmt(vars, "  vec4 t%d = flipTexture2D(texSamp%d, t%d.gb);\n",
                                i, i, ps->input_tex[i]);
             break;
         case PS_TEXTUREMODES_CLIPPLANE: {
@@ -786,7 +818,7 @@ static QString* psh_convert(struct PixelShader *ps)
                 qstring_append_fmt(vars, "  vec3 e = vec3(t0.a, t1.a, t2.a);\n");
             }
             qstring_append_fmt(vars, "  vec3 ne = 2.0 * n * dot(n, e) / dot(n, n) - e;\n"
-                                     "  vec4 t3 = textureCube(texSamp3, ne);\n");
+                                     "  vec4 t3 = flipTextureCube(texSamp3, ne);\n");
             break;
         default:
             sampler_type = NULL;
@@ -796,6 +828,9 @@ static QString* psh_convert(struct PixelShader *ps)
         }
         
         if (sampler_type != NULL) {
+            if (ps->rect_tex[i]) {
+                qstring_append_fmt(preflight, "uniform vec2 texSize%d;\n", i);
+            }
             qstring_append_fmt(preflight, "uniform %s texSamp%d;\n",
                                sampler_type, i);
             /* As this means a texture fetch does happen, do alphakill */
@@ -867,7 +902,8 @@ static QString* psh_convert(struct PixelShader *ps)
                           "#define c(x) clamp((x), -1.0, 1.0)\n"
                           "#define u(x) max((x), 0.0)\n"
                           "\n"
-                          "void main() {\n"
+                          "void main()\n"
+                          "{\n"
                           "\n");
     qstring_append(final, qstring_get_str(vars));
     qstring_append(final, "\n");

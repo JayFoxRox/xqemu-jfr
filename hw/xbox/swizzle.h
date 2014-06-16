@@ -24,14 +24,14 @@
 #include <string.h>
 #include "qemu/osdep.h"
 
-static unsigned int log2i(unsigned int i)
+static inline unsigned int log2i(unsigned int i)
 {
     unsigned int r = 0;
     while (i >>= 1) { r++; }
     return r;
 }
 
-static unsigned int get_swizzled_offset(
+static inline unsigned int get_swizzled_offset(
     unsigned int x, unsigned int y,
     unsigned int width, unsigned int height,
     unsigned int bytes_per_pixel)
@@ -69,37 +69,37 @@ static unsigned int get_swizzled_offset(
              (y & (~0 << k)) << k);
 }
 
-static void swizzle_rect(
+static inline void flip_and_swizzle(
     uint8_t *src_buf,
     unsigned int width,
     unsigned int height,
     uint8_t *dst_buf,
-    unsigned int pitch,
+    unsigned int src_pitch,
     unsigned int bytes_per_pixel)
 {
     int x, y;
     for (y = 0; y < height; y++) {
         for (x = 0; x < width; x++) {
-            uint8_t *src = src_buf + (y * pitch + x * bytes_per_pixel);
+            uint8_t *src = src_buf + ((height - y - 1) * src_pitch + x * bytes_per_pixel);
             uint8_t *dst = dst_buf + get_swizzled_offset(x, y, width, height, bytes_per_pixel);
             memcpy(dst, src, bytes_per_pixel);
         }
     }
 }
 
-static void unswizzle_rect(
+static inline void unswizzle_and_flip(
     uint8_t *src_buf,
     unsigned int width,
     unsigned int height,
     uint8_t *dst_buf,
-    unsigned int pitch,
+    unsigned int dst_pitch,
     unsigned int bytes_per_pixel)
 {
     int x, y;
     for (y = 0; y < height; y++) {
         for (x = 0; x < width; x++) {
             uint8_t *src = src_buf + get_swizzled_offset(x, y, width, height, bytes_per_pixel);
-            uint8_t *dst = dst_buf + (y * pitch + x * bytes_per_pixel);
+            uint8_t *dst = dst_buf + ((height - y - 1) * dst_pitch + x * bytes_per_pixel);
             memcpy(dst, src, bytes_per_pixel);
         }
     }
