@@ -597,31 +597,31 @@ static const char* vsh_header =
     //FIXME: What is a0 initialized as?
     "int A0 = 0;\n"
     //FIXME: I just assumed this is true for all registers?!
-    "vec4 R0 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 R1 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 R2 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 R3 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 R4 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 R5 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 R6 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 R7 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 R8 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 R9 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 R10 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 R11 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 R12 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 R0;\n"
+    "vec4 R1;\n"
+    "vec4 R2;\n"
+    "vec4 R3;\n"
+    "vec4 R4;\n"
+    "vec4 R5;\n"
+    "vec4 R6;\n"
+    "vec4 R7;\n"
+    "vec4 R8;\n"
+    "vec4 R9;\n"
+    "vec4 R10;\n"
+    "vec4 R11;\n"
+    "vec4 R12;\n"
     "\n"
     "#define oPos R12 /* oPos is a mirror of R12 */\n"
-    "vec4 oD0 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 oD1 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 oB0 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 oB1 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 oPts = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 oFog = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 oT0 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 oT1 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 oT2 = vec4(0.0,0.0,0.0,1.0);\n"
-    "vec4 oT3 = vec4(0.0,0.0,0.0,1.0);\n"
+    "vec4 oD0;\n"
+    "vec4 oD1;\n"
+    "vec4 oB0;\n"
+    "vec4 oB1;\n"
+    "vec4 oPts;\n"
+    "vec4 oFog;\n"
+    "vec4 oT0;\n"
+    "vec4 oT1;\n"
+    "vec4 oT2;\n"
+    "vec4 oT3;\n"
     "\n"
 
     /* All constants in 1 array declaration */
@@ -794,7 +794,11 @@ static const char* vsh_header =
 QString* vsh_translate(uint16_t version,
                        uint32_t *tokens, unsigned int tokens_length)
 {
-    QString *body = qstring_from_str("\n");
+    QString *body = qstring_from_str("\n"
+                                     "  /* Initialize special outputs */\n"
+                                     "  oPos = vec4(0.0, 0.0, 0.0, 1.0);\n"
+                                     "  oFog = vec4(1.0);\n"
+                                     "  oPts = vec4(gl_Point.size);\n");
     QString *header = qstring_from_str(vsh_header);
 
 #ifdef DEBUG_NV2A_GPU_SHADER_FEEDBACK

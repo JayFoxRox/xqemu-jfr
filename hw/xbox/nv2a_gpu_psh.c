@@ -719,7 +719,7 @@ static QString* psh_convert(struct PixelShader *ps)
 
     qstring_append(vars, "  vec4 v0 = gl_Color;\n");
     qstring_append(vars, "  vec4 v1 = gl_SecondaryColor;\n");
-    qstring_append(vars, "  vec4 fog = vec4(gl_Fog.color.rgb, gl_FogFragCoord);\n"); //FIXME: I have no idea what I'm doing!
+    qstring_append(vars, "  vec4 fog = vec4(gl_Fog.color.xyz, clamp(gl_FogFragCoord,0.0,1.0));\n"); //FIXME: I have no idea what I'm doing!
 
     for (i = 0; i < 4; i++) {
 
